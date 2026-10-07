@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>WiFi Setup</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: sans-serif;
+      background: #1a1a1a;
+      color: #ccc;
+      max-width: 560px;
+      margin: 32px auto;
+      padding: 16px;
+    }
+
+    h1 {
+      font-size: 1.4em;
+      margin-bottom: 4px;
+      color: #eee;
+    }
+
+    p.sub {
+      color: #888;
+      font-size: .85em;
+      margin-top: 4px;
+    }
+
+    .card {
+      background: #242424;
+      border-radius: 10px;
+      padding: 16px;
+      margin-top: 16px;
+      border: 1px solid #333;
+    }
+
+    .card h2 {
+      margin: 0 0 12px;
+      font-size: 1em;
+      color: #888;
+      text-transform: uppercase;
+      letter-spacing: .05em;
+    }
+
+    label {
+      display: block;
+      margin-top: 14px;
+      font-size: .85em;
+      font-weight: bold;
+      color: #aaa;
+    }
+
+    select,
+    input[type=text],
+    input[type=password] {
+      width: 100%;
+      margin-top: 6px;
+      padding: 9px 10px;
+      background: #0d0d0d;
+      border: 1px solid #444;
+      border-radius: 6px;
+      color: #f8f8f2;
+      font-size: .9em;
+      outline: none;
+    }
+
+    select:focus,
+    input[type=text]:focus,
+    input[type=password]:focus {
+      border-color: #1976d2;
+    }
+
+    select option {
+      background: #1a1a1a;
+    }
+
+    .actions {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-top: 16px;
+    }
+
+    .btn {
+      padding: 9px 18px;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: .9em;
+      font-weight: bold;
+    }
+
+    .btn-connect {
+      background: #1976d2;
+      color: #fff;
+    }
+
+    .btn-connect:hover {
+      background: #1565c0;
+    }
+
+    .btn-scan {
+      background: #f57c00;
+      color: #fff;
+    }
+
+    .btn-scan:hover {
+      background: #e65100;
+    }
+
+    .lbl-check {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 12px;
+      font-size: .85em;
+      font-weight: normal;
+      color: #888;
+      cursor: pointer;
+    }
+
+    .lbl-check input {
+      width: auto;
+      margin: 0;
+      padding: 0;
+      border: none;
+      cursor: pointer;
+      accent-color: #1976d2;
+    }
+
+    #msg {
+      margin-top: 14px;
+      font-size: .9em;
+      font-weight: bold;
+      min-height: 1.4em;
+    }
+
+    #msg.ok  { color: #50fa7b; }
+    #msg.err { color: #ff5555; }
+    #msg.inf { color: #888; }
+  </style>
+</head>
+
+<body>
+  <h1>&#x1F4F6; WiFi Setup</h1>
+  <p class="sub">Select a network or type its name, then enter the password.</p>
+
+  <div class="card">
+    <h2>Available Networks</h2>
+    <select id="ssid_list" onchange="pickNet(this)">
+      <option disabled selected>Scanning...</option>
+    </select>
+    <div class="actions">
+      <button class="btn btn-scan" onclick="scan()">&#x21BB; Refresh</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Credentials</h2>
+    <label>Network name</label>
+    <input type="text" id="ssid" placeholder="Select above or type manually">
+
+    <label>Password</label>
+    <input type="password" id="pass" placeholder="Leave blank for open networks">
+
+    <label class="lbl-check">
+      <input type="checkbox" id="show_pass" onchange="togglePass()">
+      Show password
+    </label>
+
+    <div class="actions">
+      <button class="btn btn-connect" onclick="connect()">Connect</button>
+    </div>
+    <div id="msg"></div>
+  </div>
+
+  <script>
+    function pickNet(sel) {
+      document.getElementById('ssid').value = sel.value;
+    }
+
+    function togglePass() {
+      var p = document.getElementById('pass');
+      p.type = document.getElementById('show_pass').checked ? 'text' : 'password';
+    }
+
+    function scan() {
+      var s = document.getElementById('ssid_list');
+      s.innerHTML = '<option disabled selected>Scanning...</option>';
+      fetch('/scan')
+        .then(function (r) { return r.json(); })
+        .then(function (nets) {
+          s.innerHTML = '';
+          nets.forEach(function (n) {
+            var o = document.createElement('option');
+            o.value = n.ssid;
+            o.text = n.ssid + ' (' + n.rssi + ' dBm)';
+            s.appendChild(o);
+          });
+          if (!nets.length) {
+            s.innerHTML = '<option disabled>No networks found</option>';
+          }
+        })
+        .catch(function () {
+          s.innerHTML = '<option disabled>Scan failed \u2014 try refresh</option>';
+        });
+    }
+
+    function connect() {
+      var ssid = document.getElementById('ssid').value.trim();
+      var pass = document.getElementById('pass').value;
+      var msg  = document.getElementById('msg');
+
+      if (!ssid) {
+        msg.className = 'err';
+        msg.textContent = 'Please enter a network name.';
+        return;
+      }
+
+      msg.className = 'inf';
+      msg.textContent = 'Connecting...';
+
+      fetch('/configure', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ssid: ssid, pass: pass }),
+      })
+        .then(function (r) { return r.json(); })
+        .then(function (r) {
+          if (r.ok) {
+            msg.className = 'ok';
+            msg.textContent = 'Done! Device is connecting to "' + ssid + '"...';
+          } else {
+            msg.className = 'err';
+            msg.textContent = 'Error: ' + r.error;
+          }
+        })
+        .catch(function () {
+          msg.className = 'ok';
+          msg.textContent = 'Done! Device is connecting...';
+        });
+    }
+
+    scan();
+  </script>
+</body>
+
+</html>

@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ESP32-S3 CAM</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: sans-serif;
+      background: #1a1a1a;
+      color: #ccc;
+      max-width: 560px;
+      margin: 32px auto;
+      padding: 16px;
+    }
+
+    h1 {
+      font-size: 1.4em;
+      margin-bottom: 4px;
+      color: #eee;
+    }
+
+    p.sub {
+      color: #888;
+      font-size: .85em;
+      margin-top: 4px;
+    }
+
+    nav {
+      margin-top: 6px;
+      font-size: .85em;
+    }
+
+    nav a {
+      color: #1976d2;
+      text-decoration: none;
+      margin-right: 12px;
+    }
+
+    nav a:hover {
+      text-decoration: underline;
+    }
+
+    .card {
+      background: #242424;
+      border-radius: 10px;
+      padding: 16px;
+      margin-top: 16px;
+      border: 1px solid #333;
+    }
+
+    .card h2 {
+      margin: 0 0 12px;
+      font-size: 1em;
+      color: #888;
+      text-transform: uppercase;
+      letter-spacing: .05em;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    td {
+      padding: 5px 4px;
+      font-size: .9em;
+      border-bottom: 1px solid #2e2e2e;
+    }
+
+    td:first-child {
+      color: #888;
+      width: 40%;
+    }
+
+    td:last-child {
+      font-weight: bold;
+      text-align: right;
+      color: #f8f8f2;
+    }
+
+    .bar {
+      display: inline-block;
+      vertical-align: middle;
+      width: 120px;
+      height: 8px;
+      margin-right: 8px;
+      background: #1a1a1a;
+      border-radius: 4px;
+      overflow: hidden;
+    }
+
+    .bar > span {
+      display: block;
+      height: 100%;
+      background: #1976d2;
+      transition: width .4s;
+    }
+
+    .bar > span.hot { background: #f57c00; }
+
+    .actions {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .btn {
+      padding: 9px 18px;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: .9em;
+      font-weight: bold;
+    }
+
+    .btn-danger {
+      background: #d93025;
+      color: #fff;
+    }
+
+    .btn-danger:hover {
+      background: #b71c1c;
+    }
+
+    .btn-warn {
+      background: #f57c00;
+      color: #fff;
+    }
+
+    .btn-warn:hover {
+      background: #e65100;
+    }
+  </style>
+</head>
+
+<body>
+  <h1>&#x1F4F7; ESP32-S3 CAM</h1>
+  <p class="sub" id="conn">Connecting...</p>
+  <nav>
+    <a href="/camera">Camera</a>
+    <a href="/console">Console</a>
+    <a href="/ota">OTA</a>
+  </nav>
+
+  <div class="card">
+    <h2>Status</h2>
+    <table id="t_status"></table>
+  </div>
+
+  <div class="card">
+    <h2>Configuration</h2>
+    <table id="t_config"></table>
+  </div>
+
+  <div class="card">
+    <h2>Actions</h2>
+    <div class="actions">
+      <button class="btn btn-warn" onclick="act('reboot')">Reboot</button>
+      <button class="btn btn-danger"
+        onclick="if(confirm('Erase WiFi credentials and reboot into the setup portal?')) act('factory_reset')">
+        Forget WiFi
+      </button>
+    </div>
+  </div>
+
+  <script>
+    var ws, retry;
+
+    function conn() {
+      ws = new WebSocket('ws://' + location.host + '/ws');
+
+      ws.onopen = function () {
+        clearTimeout(retry);
+        document.getElementById('conn').textContent = 'Connected';
+      };
+
+      ws.onmessage = function (e) {
+        var d = JSON.parse(e.data);
+        fill('t_status', d.status, cpuRows(d.cpu));
+        fill('t_config', d.config);
+      };
+
+      ws.onclose = function () {
+        document.getElementById('conn').textContent = 'Reconnecting...';
+        retry = setTimeout(conn, 3000);
+      };
+
+      ws.onerror = function () { ws.close(); };
+    }
+
+    function esc(s) {
+      return String(s).replace(/[&<>"]/g, function (c) {
+        return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+      });
+    }
+
+    /* One row per core: bar + percent; orange above 80 %. */
+    function cpuRows(cpu) {
+      var h = '';
+      (cpu || []).forEach(function (p, core) {
+        var val = p < 0 ? 'measuring…'
+          : '<span class="bar"><span' + (p > 80 ? ' class="hot"' : '') +
+            ' style="width:' + p + '%"></span></span>' + p + ' %';
+        h += '<tr><td>CPU core ' + core + '</td><td>' + val + '</td></tr>';
+      });
+      return h;
+    }
+
+    function fill(id, arr, prefix) {
+      if (!arr) { return; }
+      var h = prefix || '';
+      for (var i = 0; i < arr.length; i++) {
+        h += '<tr><td>' + esc(arr[i].label) + '</td><td>' + esc(arr[i].value) + '</td></tr>';
+      }
+      document.getElementById(id).innerHTML = h;
+    }
+
+    function act(a) {
+      if (ws && ws.readyState === 1) {
+        ws.send(JSON.stringify({ action: a }));
+      }
+    }
+
+    conn();
+  </script>
+</body>
+
+</html>

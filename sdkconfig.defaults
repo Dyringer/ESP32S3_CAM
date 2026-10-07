@@ -1,0 +1,74 @@
+# Common defaults. Board-specific target, flash size, PSRAM and partition
+# table live in boards/esp32s3_n16r8_dk/sdkconfig.board.
+
+# Console over UART0
+CONFIG_ESP_CONSOLE_UART_DEFAULT=y
+CONFIG_ESP_CONSOLE_UART_NUM=0
+CONFIG_ESP_CONSOLE_UART_BAUDRATE=115200
+
+# Logging
+CONFIG_LOG_DEFAULT_LEVEL_INFO=y
+CONFIG_LOG_MAXIMUM_LEVEL_DEBUG=y
+CONFIG_LOG_COLORS=y
+
+# Bigger main stack (useful as it grows later)
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
+
+# FreeRTOS tick rate 1000 Hz (1 ms tick). The default 100 Hz makes
+# pdMS_TO_TICKS(1) round down to 0 ticks (no delay); 1 kHz lets sub-10 ms
+# vTaskDelay() values resolve to a real delay.
+CONFIG_FREERTOS_HZ=1000
+
+# FreeRTOS run-time stats — per-task CPU time, the source of the CPU load
+# shown on the dashboard, the camera page and by the "cpu" shell command
+# (components/sysmon). The 64-bit counter is the full esp_timer value, so it
+# never wraps (the 32-bit one overflows after ~71 minutes).
+CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS=y
+CONFIG_FREERTOS_RUN_TIME_STATS_USING_ESP_TIMER=y
+CONFIG_FREERTOS_RUN_TIME_COUNTER_TYPE_U64=y
+CONFIG_FREERTOS_VTASKLIST_INCLUDE_COREID=y
+
+# OTA rollback safety net: if a freshly-flashed image never reaches the
+# "valid" call (esp_ota_mark_app_valid_cancel_rollback(), see main.c), the
+# bootloader automatically reverts to the previous OTA slot on next boot.
+# This is the only recovery story on a factory-less 2-slot partition table
+# (see boards/esp32s3_n16r8_dk/partitions.csv) — without it a bad OTA image
+# bricks the device.
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
+
+# HTTP server WebSocket support (required by http_panel)
+CONFIG_HTTPD_WS_SUPPORT=y
+
+# ESP-IDF 6.0 breaking change (commit c9daea6, issue #18539): the WS URI
+# handler is no longer called on the handshake GET. fd registration must move
+# to a ws_post_handshake_cb, which requires this option.
+CONFIG_HTTPD_WS_POST_HANDSHAKE_CB_SUPPORT=y
+
+# lwIP socket budget. The panel runs the httpd (which reserves 3 sockets for
+# itself) plus up to 4 WS clients across 3 endpoints, alongside the WiFi/DNS
+# tasks. The default of 10 is too tight and causes WS upgrades to be dropped.
+CONFIG_LWIP_MAX_SOCKETS=16
+
+# Camera (espressif/esp32-camera). The board carries an OV3660 only — every
+# other sensor driver is compiled out so probing is fast and the image small.
+# CONFIG_OV7670_SUPPORT is not set
+# CONFIG_OV7725_SUPPORT is not set
+# CONFIG_NT99141_SUPPORT is not set
+# CONFIG_OV2640_SUPPORT is not set
+CONFIG_OV3660_SUPPORT=y
+# CONFIG_OV3640_SUPPORT is not set
+# CONFIG_OV5640_SUPPORT is not set
+# CONFIG_GC2145_SUPPORT is not set
+# CONFIG_GC032A_SUPPORT is not set
+# CONFIG_GC0308_SUPPORT is not set
+# CONFIG_BF3005_SUPPORT is not set
+# CONFIG_BF20A6_SUPPORT is not set
+# CONFIG_SC101IOT_SUPPORT is not set
+# CONFIG_SC030IOT_SUPPORT is not set
+# CONFIG_SC031GS_SUPPORT is not set
+# CONFIG_HM1055_SUPPORT is not set
+# CONFIG_HM0360_SUPPORT is not set
+# CONFIG_MEGA_CCM_SUPPORT is not set
+
+# Camera frame-copy task on the application core — Core 0 belongs to WiFi.
+CONFIG_CAMERA_CORE1=y

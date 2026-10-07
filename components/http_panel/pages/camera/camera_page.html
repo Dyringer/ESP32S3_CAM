@@ -1,0 +1,491 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ESP32-S3 CAM — Camera</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: sans-serif;
+      background: #1a1a1a;
+      color: #ccc;
+      max-width: 1000px;
+      margin: 32px auto;
+      padding: 16px;
+    }
+
+    h1 {
+      font-size: 1.4em;
+      margin-bottom: 4px;
+      color: #eee;
+    }
+
+    p.sub {
+      color: #888;
+      font-size: .85em;
+      margin-top: 4px;
+    }
+
+    nav {
+      margin-top: 6px;
+      font-size: .85em;
+    }
+
+    nav a {
+      color: #1976d2;
+      text-decoration: none;
+      margin-right: 12px;
+    }
+
+    nav a:hover {
+      text-decoration: underline;
+    }
+
+    .card {
+      background: #242424;
+      border-radius: 10px;
+      padding: 16px;
+      margin-top: 16px;
+      border: 1px solid #333;
+    }
+
+    .card h2 {
+      margin: 0 0 12px;
+      font-size: 1em;
+      color: #888;
+      text-transform: uppercase;
+      letter-spacing: .05em;
+    }
+
+    .view {
+      position: relative;
+      background: #111;
+      border-radius: 6px;
+      min-height: 200px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+    }
+
+    .view img {
+      display: block;
+      max-width: 100%;
+      height: auto;
+    }
+
+    .view .placeholder {
+      color: #555;
+      font-size: .9em;
+      padding: 40px;
+      text-align: center;
+    }
+
+    .actions {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      align-items: center;
+      margin-top: 12px;
+    }
+
+    .btn {
+      padding: 9px 18px;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: .9em;
+      font-weight: bold;
+      text-decoration: none;
+      display: inline-block;
+    }
+
+    .btn-primary { background: #1976d2; color: #fff; }
+    .btn-primary:hover { background: #1565c0; }
+    .btn-plain { background: #3a3a3a; color: #eee; }
+    .btn-plain:hover { background: #474747; }
+    .btn[disabled] { opacity: .4; cursor: default; }
+
+    #info {
+      margin-left: auto;
+      font-size: .85em;
+      color: #888;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr));
+      gap: 0 16px;
+    }
+
+    .row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 6px 0;
+      border-bottom: 1px solid #2e2e2e;
+      font-size: .9em;
+    }
+
+    .row:last-child { border-bottom: none; }
+    .row.off { opacity: .35; }
+
+    /* Flex items default to min-width:auto, and a range input's intrinsic
+     * width (~130px) would push the value label out of the card. Let the
+     * controls shrink to whatever space the label leaves. */
+    .row > * { min-width: 0; }
+
+    .row label {
+      flex: 0 1 45%;
+      color: #888;
+    }
+
+    .row input[type=range] {
+      flex: 1 1 0;
+      accent-color: #1976d2;
+    }
+
+    .row select {
+      flex: 1 1 0;
+      background: #1a1a1a;
+      color: #eee;
+      border: 1px solid #444;
+      border-radius: 4px;
+      padding: 4px;
+    }
+
+    .row .val {
+      flex: 0 0 auto;
+      min-width: 3.2em;   /* fits "-2", "320", "1536" without reflowing */
+      text-align: right;
+      font-weight: bold;
+      color: #f8f8f2;
+    }
+
+    .row input[type=checkbox] {
+      margin-left: auto;
+      width: 18px;
+      height: 18px;
+      accent-color: #1976d2;
+    }
+
+    details summary {
+      cursor: pointer;
+      color: #888;
+      font-size: 1em;
+      text-transform: uppercase;
+      letter-spacing: .05em;
+      font-weight: bold;
+    }
+
+    details[open] summary { margin-bottom: 12px; }
+
+    #err { color: #ff6b6b; }
+
+    .savebar {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+
+    #save_state { font-size: .9em; color: #888; margin-right: auto; }
+    #save_state.dirty { color: #f57c00; }
+  </style>
+</head>
+
+<body>
+  <h1>&#x1F4F7; ESP32-S3 CAM — Camera</h1>
+  <p class="sub"><span id="sensor">Connecting...</span> <span id="err"></span></p>
+  <nav>
+    <a href="/">Dashboard</a>
+    <a href="/console">Console</a>
+    <a href="/ota">OTA</a>
+  </nav>
+
+  <div class="card">
+    <div class="view" id="view">
+      <div class="placeholder" id="placeholder">Stream stopped</div>
+      <img id="stream" alt="" style="display:none">
+    </div>
+    <div class="actions">
+      <button class="btn btn-primary" id="b_stream" onclick="toggleStream()">Start stream</button>
+      <button class="btn btn-plain" id="b_still" onclick="snapshot()">Snapshot</button>
+      <a class="btn btn-plain" id="b_save" style="display:none" download>Save snapshot</a>
+      <span id="info"></span>
+    </div>
+  </div>
+
+  <div class="card savebar">
+    <span id="save_state">Settings</span>
+    <button class="btn btn-primary" id="b_save_cfg" onclick="settingsAction('save')">Save settings</button>
+    <button class="btn btn-plain" id="b_defaults"
+      onclick="if (confirm('Restore default camera settings and erase the saved ones?')) settingsAction('defaults')">
+      Restore defaults
+    </button>
+  </div>
+
+  <div class="grid" id="controls"></div>
+
+  <script>
+    /* Page layout only — names, ranges and current values come from
+     * /camera/status, so nothing here duplicates firmware limits.
+     * [name, label, kind, options, dependsOn, dependsValue]
+     * A control with dependsOn is greyed out unless that setting equals
+     * dependsValue (e.g. manual exposure only applies with AEC off). */
+    var LAYOUT = [
+      { title: 'Image', items: [
+        ['framesize', 'Resolution', 'framesize'],
+        ['quality', 'JPEG quality (lower = better)', 'range'],
+        ['brightness', 'Brightness', 'range'],
+        ['contrast', 'Contrast', 'range'],
+        ['saturation', 'Saturation', 'range'],
+        ['sharpness', 'Sharpness', 'range'],
+        ['denoise', 'De-noise', 'range'],
+        ['special_effect', 'Effect', 'select',
+          ['None', 'Negative', 'Grayscale', 'Red tint', 'Green tint', 'Blue tint', 'Sepia']],
+        ['hmirror', 'Mirror', 'toggle'],
+        ['vflip', 'Flip', 'toggle']
+      ]},
+      { title: 'Exposure & gain', items: [
+        ['aec', 'Auto exposure', 'toggle'],
+        ['aec2', 'Night mode', 'toggle'],
+        ['ae_level', 'Exposure level', 'range', null, 'aec', 1],
+        ['aec_value', 'Manual exposure', 'range', null, 'aec', 0],
+        ['agc', 'Auto gain', 'toggle'],
+        ['agc_gain', 'Manual gain', 'range', null, 'agc', 0],
+        ['gainceiling', 'Gain ceiling', 'range', null, 'agc', 1]
+      ]},
+      { title: 'White balance', items: [
+        ['awb', 'Auto white balance', 'toggle'],
+        ['awb_gain', 'AWB gain', 'toggle'],
+        ['wb_mode', 'Mode', 'select', ['Auto', 'Sunny', 'Cloudy', 'Office', 'Home'], 'awb_gain', 1]
+      ]},
+      { title: 'LED', items: [
+        ['led_intensity', 'Intensity (lit while streaming)', 'range']
+      ]},
+      { title: 'Corrections', collapsed: true, items: [
+        ['bpc', 'Black pixel correction', 'toggle'],
+        ['wpc', 'White pixel correction', 'toggle'],
+        ['raw_gma', 'Gamma', 'toggle'],
+        ['lenc', 'Lens correction', 'toggle'],
+        ['dcw', 'Downsize (DCW)', 'toggle'],
+        ['colorbar', 'Test pattern', 'toggle']
+      ]}
+    ];
+
+    var SIZE_NAMES = {
+      '2048x1536': 'QXGA', '1920x1080': 'Full HD', '1600x1200': 'UXGA',
+      '1280x1024': 'SXGA', '1280x720': 'HD', '1024x768': 'XGA',
+      '800x600': 'SVGA', '640x480': 'VGA', '320x240': 'QVGA'
+    };
+
+    var built = false, state = null, streaming = false, stillUrl = null;
+
+    function $(id) { return document.getElementById(id); }
+
+    function esc(s) {
+      return String(s).replace(/[&<>"]/g, function (c) {
+        return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+      });
+    }
+
+    function showError(msg) {
+      $('err').textContent = msg ? '— ' + msg : '';
+    }
+
+    /* ---- Controls --------------------------------------------------- */
+
+    function buildControls(st) {
+      var html = '';
+      LAYOUT.forEach(function (group) {
+        var rows = '';
+        group.items.forEach(function (it) {
+          var name = it[0], s = st.settings[name];
+          if (!s) { return; }
+          rows += '<div class="row" id="row_' + name + '"><label for="c_' + name + '">' +
+            esc(it[1]) + '</label>' + controlHtml(name, it, s, st) + '</div>';
+        });
+        if (!rows) { return; }
+        html += group.collapsed
+          ? '<div class="card"><details><summary>' + esc(group.title) + '</summary>' + rows + '</details></div>'
+          : '<div class="card"><h2>' + esc(group.title) + '</h2>' + rows + '</div>';
+      });
+      $('controls').innerHTML = html;
+      built = true;
+    }
+
+    function controlHtml(name, it, s, st) {
+      var kind = it[2];
+      if (kind === 'toggle') {
+        return '<input type="checkbox" id="c_' + name + '" onchange="send(\'' + name + '\', this.checked ? 1 : 0)">';
+      }
+      if (kind === 'select' || kind === 'framesize') {
+        var vals = [], opts = '';
+        for (var v = s.min; v <= s.max; v++) { vals.push(v); }
+        if (kind === 'framesize') { vals.reverse(); }   /* largest resolution first */
+        vals.forEach(function (v) {
+          var label;
+          if (kind === 'framesize') {
+            var wh = st.framesizes[v];
+            if (!wh) { return; }
+            var key = wh[0] + 'x' + wh[1];
+            label = key + (SIZE_NAMES[key] ? ' (' + SIZE_NAMES[key] + ')' : '');
+          } else {
+            label = it[3][v] || v;
+          }
+          opts += '<option value="' + v + '">' + esc(label) + '</option>';
+        });
+        return '<select id="c_' + name + '" onchange="send(\'' + name + '\', this.value)">' + opts + '</select>';
+      }
+      return '<input type="range" id="c_' + name + '" min="' + s.min + '" max="' + s.max + '"' +
+        ' oninput="$(\'v_' + name + '\').textContent = this.value"' +
+        ' onchange="send(\'' + name + '\', this.value)">' +
+        '<span class="val" id="v_' + name + '"></span>';
+    }
+
+    function applyValues(st) {
+      LAYOUT.forEach(function (group) {
+        group.items.forEach(function (it) {
+          var name = it[0], s = st.settings[name], el = $('c_' + name);
+          if (!s || !el) { return; }
+          if (el.type === 'checkbox') { el.checked = !!s.value; }
+          else { el.value = s.value; }
+          var v = $('v_' + name);
+          if (v) { v.textContent = s.value; }
+          if (it[4]) {
+            var dep = st.settings[it[4]];
+            var on = !dep || dep.value === it[5];
+            el.disabled = !on;
+            $('row_' + name).className = on ? 'row' : 'row off';
+          }
+        });
+      });
+    }
+
+    function applyInfo(st) {
+      $('sensor').textContent = st.ready ? st.sensor : 'Camera not detected';
+      var fs = st.settings.framesize, wh = fs && st.framesizes[fs.value];
+      var txt = wh ? wh[0] + '×' + wh[1] : '';
+      if (streaming || st.viewers > 0) {
+        txt += ' · ' + st.fps.toFixed(1) + ' fps · ' +
+          st.viewers + '/' + st.max_viewers + ' viewer' + (st.max_viewers > 1 ? 's' : '');
+      }
+      var cpu = (st.cpu || []).filter(function (p) { return p >= 0; });
+      if (cpu.length) {
+        txt += ' · CPU ' + cpu.map(function (p) { return p + '%'; }).join(' / ');
+      }
+      $('info').textContent = txt;
+      var ss = $('save_state');
+      ss.textContent = !st.ready ? 'Settings unavailable'
+        : st.unsaved ? 'Unsaved changes \u2014 lost on reboot unless saved'
+        : 'Settings saved \u2014 applied at every boot';
+      ss.className = st.unsaved ? 'dirty' : '';
+      $('b_save_cfg').disabled = !st.ready || !st.unsaved;
+      $('b_defaults').disabled = !st.ready;
+      $('b_stream').disabled = !st.ready;
+      $('b_still').disabled = !st.ready;
+    }
+
+    function refresh(full) {
+      return fetch('/camera/status', { cache: 'no-store' })
+        .then(function (r) { return r.json(); })
+        .then(function (st) {
+          state = st;
+          if (!built) { buildControls(st); full = true; }
+          if (full) { applyValues(st); }
+          applyInfo(st);
+        })
+        .catch(function () { $('sensor').textContent = 'Device unreachable'; });
+    }
+
+    /* Fire a control request, report failures, then re-sync every control
+     * (settings can affect each other). */
+    function request(url, label, opts) {
+      showError('');
+      fetch(url, opts)
+        .then(function (r) {
+          if (!r.ok) {
+            return r.text().then(function (t) { showError(label + ': ' + (t || r.status)); });
+          }
+        })
+        .catch(function () { showError('request failed'); })
+        .then(function () { refresh(true); });
+    }
+
+    function send(name, value) {
+      request('/camera/control?var=' + encodeURIComponent(name) + '&val=' + parseInt(value, 10), name);
+    }
+
+    function settingsAction(action) {
+      request('/camera/settings?action=' + action, action, { method: 'POST' });
+    }
+
+    /* ---- Stream / snapshot ------------------------------------------ */
+
+    /* Show @src in the viewer, or the "stopped" placeholder when null. */
+    function showImage(src) {
+      var img = $('stream');
+      if (src) {
+        img.src = src;
+      } else {
+        img.removeAttribute('src');   /* also aborts an MJPEG connection */
+      }
+      img.style.display = src ? '' : 'none';
+      $('placeholder').style.display = src ? 'none' : '';
+    }
+
+    function setStreaming(on) {
+      streaming = on;
+      var img = $('stream');
+      if (on) {
+        img.onerror = function () {
+          if (streaming) {
+            setStreaming(false);
+            showError('stream unavailable (viewer limit reached or camera error)');
+          }
+        };
+        showImage('/camera/stream?_=' + Date.now());
+      } else {
+        img.onerror = null;
+        showImage(null);
+      }
+      $('b_stream').textContent = on ? 'Stop stream' : 'Start stream';
+    }
+
+    function toggleStream() {
+      showError('');
+      setStreaming(!streaming);
+    }
+
+    function snapshot() {
+      showError('');
+      $('b_still').disabled = true;
+      fetch('/camera/capture?_=' + Date.now(), { cache: 'no-store' })
+        .then(function (r) {
+          if (!r.ok) { throw new Error('HTTP ' + r.status); }
+          return r.blob();
+        })
+        .then(function (blob) {
+          if (stillUrl) { URL.revokeObjectURL(stillUrl); }
+          stillUrl = URL.createObjectURL(blob);
+          if (streaming) { setStreaming(false); }
+          showImage(stillUrl);
+          var save = $('b_save');
+          save.href = stillUrl;
+          save.download = 'capture-' + new Date().toISOString().replace(/[:.]/g, '-') + '.jpg';
+          save.style.display = '';
+        })
+        .catch(function (e) { showError('snapshot failed (' + e.message + ')'); })
+        .then(function () { $('b_still').disabled = !(state && state.ready); });
+    }
+
+    refresh(true);
+    setInterval(function () { refresh(false); }, 2000);
+  </script>
+</body>
+
+</html>

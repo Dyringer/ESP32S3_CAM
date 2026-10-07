@@ -1,0 +1,28 @@
+# ESP32S3_CAM (DeskBuddy) — ESP-IDF 6.x project
+
+# --- ESP-IDF build output ----------------------------------------------------
+# idf.py build dir: .elf/.bin/.map, generated *.html.S, compile_commands.json
+build/
+
+# --- ESP-IDF config ----------------------------------------------------------
+# Generated from sdkconfig.defaults + boards/<board>/sdkconfig.board (see
+# CMakeLists.txt). Put persistent changes in those files, not in sdkconfig.
+sdkconfig
+sdkconfig.old
+
+# --- ESP-IDF component manager -----------------------------------------------
+# Downloaded from the registry per main/idf_component.yml.
+# dependencies.lock IS tracked — it pins the exact versions.
+managed_components/
+
+# --- Python (tools/) ---------------------------------------------------------
+__pycache__/
+*.pyc
+.venv/
+
+# --- Editor / IDE (machine-specific paths, COM ports) ------------------------
+.vscode/
+
+# --- Claude Code -------------------------------------------------------------
+.claude/
+CLAUDE.md
