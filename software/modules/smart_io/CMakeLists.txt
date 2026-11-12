@@ -1,0 +1,59 @@
+# Boards without a smart_io pin pool get an empty component: nothing is built.
+idf_build_get_property(board_has_smart_io BOARD_HAS_SMART_IO)
+
+if(NOT board_has_smart_io)
+    idf_component_register()
+    return()
+endif()
+
+idf_component_register(
+    SRCS
+        "smart_io.c"
+        "smart_io_hex.c"
+        "smart_io_json.c"
+        "smart_io_params.c"
+        "smart_io_registry.c"
+        "smart_io_shell.c"
+        "smart_io_store.c"
+        "stream/smart_io_frame.c"
+        "stream/smart_io_series.c"
+        "stream/smart_io_stream.c"
+        "roles/smart_io_adc.c"
+        "roles/smart_io_digital.c"
+        "roles/smart_io_i2c.c"
+        "roles/smart_io_pad.c"
+        "roles/smart_io_pulse.c"
+        "roles/smart_io_pwm.c"
+        "roles/smart_io_uart.c"
+    INCLUDE_DIRS
+        "include"
+    PRIV_INCLUDE_DIRS
+        "."
+        "roles"
+        "stream"
+    REQUIRES
+        esp_event
+        esp_hal_gpio
+    PRIV_REQUIRES
+        board
+        cjson
+        common
+        data
+        esp_adc
+        esp_app_format
+        esp_driver_gpio
+        esp_driver_i2c
+        esp_driver_ledc
+        esp_driver_rmt
+        esp_driver_uart
+        esp_hal_ledc
+        esp_hal_rmt
+        esp_hal_uart
+        esp_hw_support
+        esp_timer
+        freertos
+        heap
+        log
+        ota
+        shell
+)

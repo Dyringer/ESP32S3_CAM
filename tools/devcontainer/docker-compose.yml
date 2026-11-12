@@ -1,0 +1,13 @@
+version: '3'
+services:
+  idf:
+    environment:
+      # Matches host user UID so bind-mount files are writable without sudo.
+      # Set LOCAL_USER_ID in your shell or .env before launching the devcontainer.
+      - "LOCAL_USER_ID=${LOCAL_USER_ID:-1000}"
+
+    # Uncomment to enable ptrace-based debuggers (address sanitizer, etc.)
+    # cap_add:
+    #   - SYS_PTRACE
+    # security_opt:
+    #   - seccomp:unconfined

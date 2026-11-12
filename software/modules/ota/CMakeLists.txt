@@ -1,0 +1,19 @@
+idf_component_register(
+    SRCS
+        "ota.c"
+        "ota_shell.c"
+    INCLUDE_DIRS
+        "."
+    PRIV_INCLUDE_DIRS
+        "${CMAKE_BINARY_DIR}"
+    REQUIRES
+        app_update
+        esp_app_format
+        esp_event
+        shell
+        log
+    PRIV_REQUIRES
+        common
+        esp_timer
+        heap
+)

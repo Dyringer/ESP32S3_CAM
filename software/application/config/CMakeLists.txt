@@ -1,0 +1,1 @@
+idf_component_register(COMPONENT_CONFIG_ONLY)

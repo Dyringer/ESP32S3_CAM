@@ -1,0 +1,31 @@
+
+idf_component_register(
+    SRCS
+        "wifi_connection.c"
+        "network_settings.c"
+        "sta/net_wifi_sta.c"
+        "ap/net_wifi_ap.c"
+        "shell/wifi_shell.c"
+        "provisioning/wifi_provisioning.c"
+        "provisioning/wifi_provisioning_http.c"
+    EMBED_FILES
+        "provisioning/wifi_provisioning.html"
+    INCLUDE_DIRS
+        "."
+        "sta"
+        "ap"
+        "shell"
+        "provisioning"
+    REQUIRES
+        esp_wifi
+        esp_netif
+        esp_event
+        data
+        esp_http_server
+        shell
+        cjson
+        lwip
+        log
+        esp_timer
+        common
+)

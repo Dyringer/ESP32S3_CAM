@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ESP32S3 — Dashboard</title>
+  <link rel="stylesheet" href="/panel.css">
+</head>
+
+<body>
+  <header id="panel-header"></header>
+  <script src="/panel.js"></script>
+
+  <main class="panel-main">
+    <div class="section-title">Status</div>
+    <div class="stats" id="s_status"></div>
+
+    <div class="section-title">Sensors</div>
+    <div class="stats" id="s_sensors"></div>
+
+    <div class="card">
+      <div class="card-head">
+        <h2>Device actions</h2>
+      </div>
+      <div class="actions">
+        <button class="btn btn-warn" onclick="act('reboot')">Reboot</button>
+        <button class="btn btn-danger"
+          onclick="if(confirm('Erase all settings (WiFi, camera, upload) and reboot into the setup portal?')) act('factory_reset')">
+          Factory reset
+        </button>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    var ws, retry;
+
+    function conn() {
+      ws = new WebSocket('ws://' + location.host + '/ws');
+
+      ws.onopen = function () {
+        clearTimeout(retry);
+        panelStatus('Connected', 'ok');
+      };
+
+      ws.onmessage = function (e) {
+        var d = JSON.parse(e.data);
+        fill('s_status', d.status);
+        fill('s_sensors', d.sensors);
+      };
+
+      ws.onclose = function () {
+        panelStatus('Reconnecting...', 'busy');
+        retry = setTimeout(conn, 3000);
+      };
+
+      ws.onerror = function () { ws.close(); };
+    }
+
+    function fill(id, arr) {
+      if (!arr) { return; }
+      var h = '';
+      for (var i = 0; i < arr.length; i++) {
+        h += '<div class="stat"><span>' + esc(arr[i].label) + '</span><b>'
+          + esc(arr[i].value) + '</b></div>';
+      }
+      document.getElementById(id).innerHTML = h;
+    }
+
+    function act(a) {
+      if (ws && ws.readyState === 1) {
+        ws.send(JSON.stringify({ action: a }));
+      }
+    }
+
+    conn();
+  </script>
+</body>
+
+</html>

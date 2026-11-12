@@ -1,0 +1,35 @@
+// For format details, see https://aka.ms/devcontainer.json
+{
+	"name": "esp32s3_cam",
+	"dockerComposeFile": [
+		"../docker-compose.yml",
+		"docker-compose.yml"
+	],
+	"service": "idf",
+	"workspaceFolder": "/workspace",
+	"customizations": {
+		"vscode": {
+			"extensions": [
+				"ms-vscode.cpptools",
+				"llvm-vs-code-extensions.vscode-clangd",
+				"ms-vscode.cmake-tools",
+				"streetsidesoftware.code-spell-checker",
+				"mhutchie.git-graph",
+				"usernamehw.errorlens",
+				"cschlosser.doxdocgen",
+				"espressif.esp-idf-extension",
+				"hbenl.vscode-test-explorer",
+				"numaru.vscode-ceedling-test-adapter",
+				"trond-snekvik.gnu-mapfiles",
+				"Anthropic.claude-code"
+			],
+			"settings": {
+				"idf.espIdfPath": "/opt/esp/esp-idf",
+				"idf.toolsPath": "/opt/esp",
+				"idf.gitPath": "/usr/bin/git"
+			}
+		}
+	},
+	"remoteUser": "docker",
+	"updateRemoteUserUID": false
+}

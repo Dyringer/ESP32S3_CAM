@@ -1,0 +1,16 @@
+idf_component_register(
+    SRCS
+        "sysmon.c"
+        "sysmon_shell.c"
+    INCLUDE_DIRS
+        "."
+    REQUIRES
+        freertos
+    PRIV_REQUIRES
+        common
+        esp_hw_support
+        esp_timer
+        heap
+        log
+        shell
+)

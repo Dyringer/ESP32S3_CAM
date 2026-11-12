@@ -1,0 +1,11 @@
+{
+    "ceedlingExplorer.projectPath": "_build_debug/test/unit/",
+    "ceedlingExplorer.debugConfiguration": "Ceedling TE",
+    "idf.espIdfPath": "/opt/esp/esp-idf",
+    "idf.toolsPath": "/opt/esp",
+    "clangd.arguments": [
+        "--background-index",
+        "--query-driver=/opt/esp/tools/**",
+        "--compile-commands-dir=${workspaceFolder}/_build_debug"
+    ]
+}

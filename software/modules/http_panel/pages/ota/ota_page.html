@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ESP32S3 — OTA</title>
+  <link rel="stylesheet" href="/panel.css">
+  <style>
+    #dropzone {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 10px;
+      border: 2px dashed var(--border);
+      border-radius: var(--radius);
+      padding: 32px 16px;
+      text-align: center;
+      font-size: .9em;
+      color: var(--text-dim);
+      cursor: pointer;
+      transition: border-color .15s, color .15s, background .15s;
+    }
+
+    /* Children would fire dragleave on the zone and make it flicker. */
+    #dropzone > * { pointer-events: none; }
+
+    #dropzone svg {
+      width: 36px;
+      height: 36px;
+      color: var(--text-faint);
+      transition: color .15s;
+    }
+
+    #dropzone:hover,
+    #dropzone.drag {
+      border-color: var(--accent);
+      color: var(--text);
+    }
+
+    #dropzone:hover svg,
+    #dropzone.drag svg { color: var(--accent); }
+
+    #dropzone.drag { background: var(--accent-soft); }
+
+    #file_input { display: none; }
+
+
+    #bar { margin-top: 16px; }
+
+    #pct {
+      font-size: .85em;
+      margin-top: 6px;
+      font-variant-numeric: tabular-nums;
+    }
+
+    #result { margin-top: 14px; }
+    #result .actions { margin-top: 10px; }
+  </style>
+</head>
+
+<body>
+  <header id="panel-header"></header>
+  <script src="/panel.js"></script>
+
+  <main class="panel-main">
+    <div class="card">
+      <div class="card-head">
+        <h2>Firmware</h2>
+      </div>
+      <table class="kv" id="t_info"></table>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <h2>Upload firmware</h2>
+      </div>
+      <div id="dropzone">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+          stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12" />
+        </svg>
+        <span>Drag &amp; drop a .bin here, or click to choose a file</span>
+      </div>
+      <input type="file" id="file_input" accept=".bin">
+      <progress id="bar" max="100" value="0" style="display:none"></progress>
+      <div class="muted" id="pct"></div>
+      <div class="alert" id="result"></div>
+    </div>
+  </main>
+
+  <script>
+    var ws, retry;
+    var xhr = null;
+
+    function conn() {
+      ws = new WebSocket('ws://' + location.host + '/ota/ws');
+
+      ws.onopen = function () {
+        clearTimeout(retry);
+        panelStatus('Connected', 'ok');
+      };
+
+      ws.onmessage = function (e) { onProgress(JSON.parse(e.data)); };
+
+      ws.onclose = function () {
+        panelStatus('Reconnecting...', 'busy');
+        retry = setTimeout(conn, 3000);
+      };
+
+      ws.onerror = function () { ws.close(); };
+    }
+
+    function onProgress(d) {
+      /* XHR progress drives the bar during the upload; this covers the
+       * validating/applying phase after it. */
+      if (d.bytes_expected > 0) {
+        var pct = Math.round(100 * d.bytes_written / d.bytes_expected);
+        setBar(pct, d.state);
+      }
+
+      if (d.state === 'failed' && d.error) {
+        showResult(false, 'Update failed: ' + d.error);
+      }
+    }
+
+    function setBar(pct, label) {
+      var bar = document.getElementById('bar');
+      bar.style.display = '';
+      bar.value = pct;
+      document.getElementById('pct').textContent = label + ' — ' + pct + '%';
+    }
+
+    function showResult(ok, msg) {
+      var el = document.getElementById('result');
+      el.className = ok ? 'alert ok' : 'alert error';
+      el.innerHTML = msg;
+    }
+
+    function fill(id, arr) {
+      var h = '';
+      for (var i = 0; i < arr.length; i++) {
+        h += '<tr><td>' + esc(arr[i].label) + '</td><td>' + esc(arr[i].value) + '</td></tr>';
+      }
+      document.getElementById(id).innerHTML = h;
+    }
+
+    function fetchInfo() {
+      fetch('/ota/info').then(function (r) { return r.json(); })
+        .then(function (d) { fill('t_info', d.info); })
+        .catch(function () { });
+    }
+
+    function upload(file) {
+      if (xhr) { return; }
+
+      showResult(true, '');
+      document.getElementById('bar').style.display = '';
+      setBar(0, 'uploading');
+
+      xhr = new XMLHttpRequest();
+      xhr.open('POST', '/ota/upload');
+      xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+
+      xhr.upload.onprogress = function (e) {
+        if (e.lengthComputable) {
+          setBar(Math.round(100 * e.loaded / e.total), 'uploading');
+        }
+      };
+
+      xhr.onreadystatechange = function () {
+        if (xhr.readyState !== 4) { return; }
+
+        var status = xhr.status;
+        var body = {};
+        try { body = JSON.parse(xhr.responseText); } catch (e) { }
+
+        if (status === 200 && body.ok) {
+          setBar(100, 'applied');
+          showResult(true, 'Update applied.' + rebootControls());
+        } else {
+          showResult(false, 'Upload failed: ' + (body.error || ('HTTP ' + status)));
+        }
+
+        xhr = null;
+      };
+
+      xhr.onerror = function () {
+        showResult(false, 'Upload failed: network error');
+        xhr = null;
+      };
+
+      xhr.send(file);
+    }
+
+    var reboot_timer = null;
+    var reboot_secs = 5;
+
+    function rebootControls() {
+      reboot_secs = 5;
+      reboot_timer = setInterval(tickReboot, 1000);
+      return '<div class="actions"><button class="btn" id="btn_reboot" onclick="doReboot()">' +
+        'Reboot now (' + reboot_secs + ')</button>' +
+        '<a href="#" onclick="cancelReboot();return false;">cancel</a></div>';
+    }
+
+    function tickReboot() {
+      reboot_secs--;
+      var btn = document.getElementById('btn_reboot');
+      if (!btn) { clearInterval(reboot_timer); return; }
+      if (reboot_secs <= 0) {
+        clearInterval(reboot_timer);
+        doReboot();
+        return;
+      }
+      btn.textContent = 'Reboot now (' + reboot_secs + ')';
+    }
+
+    function cancelReboot() {
+      clearInterval(reboot_timer);
+      var btn = document.getElementById('btn_reboot');
+      if (btn) { btn.textContent = 'Reboot now'; }
+    }
+
+    function doReboot() {
+      clearInterval(reboot_timer);
+      if (ws && ws.readyState === 1) {
+        ws.send(JSON.stringify({ action: 'reboot' }));
+      }
+      showResult(true, 'Rebooting...');
+    }
+
+    var dz = document.getElementById('dropzone');
+    var fi = document.getElementById('file_input');
+
+    dz.addEventListener('click', function () { fi.click(); });
+
+    dz.addEventListener('dragover', function (e) {
+      e.preventDefault();
+      dz.classList.add('drag');
+    });
+
+    dz.addEventListener('dragleave', function () { dz.classList.remove('drag'); });
+
+    dz.addEventListener('drop', function (e) {
+      e.preventDefault();
+      dz.classList.remove('drag');
+      if (e.dataTransfer.files.length > 0) { upload(e.dataTransfer.files[0]); }
+    });
+
+    fi.addEventListener('change', function () {
+      if (fi.files.length > 0) { upload(fi.files[0]); }
+    });
+
+    fetchInfo();
+    conn();
+  </script>
+</body>
+
+</html>

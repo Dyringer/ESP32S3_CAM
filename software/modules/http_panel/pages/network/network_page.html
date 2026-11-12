@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ESP32S3 — Network</title>
+  <link rel="stylesheet" href="/panel.css">
+  <style>
+    .card-head + .note {
+      margin-top: 0;
+    }
+
+    .hint-row {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 10px;
+      margin-top: 12px;
+    }
+
+    .hint-row .btn {
+      flex: none;
+    }
+
+    .hint {
+      font-size: .85em;
+      color: var(--text-dim);
+    }
+
+    code {
+      display: inline-block;
+      margin-top: 4px;
+      padding: 4px 8px;
+      font-family: var(--mono);
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      color: var(--accent);
+      user-select: all;
+      overflow-wrap: anywhere;
+    }
+
+    .big {
+      font-size: 1.6em;
+      font-weight: 650;
+      letter-spacing: -.02em;
+      color: var(--text);
+    }
+
+    .chart {
+      display: flex;
+      align-items: flex-end;
+      gap: 2px;
+      height: 80px;
+      margin-top: 12px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .chart:empty {
+      display: none;
+    }
+
+    .chart > span {
+      flex: 1;
+      min-height: 1px;
+      background: var(--accent);
+      border-radius: 3px 3px 0 0;
+    }
+
+    .scroll {
+      margin-top: 12px;
+    }
+
+    tr.mine td {
+      color: var(--accent);
+      background: var(--accent-soft);
+      font-weight: 600;
+    }
+  </style>
+</head>
+
+<body>
+  <header id="panel-header"></header>
+  <script src="/panel.js"></script>
+
+  <main class="panel-main">
+    <div class="card">
+      <div class="card-head">
+        <h2>Connection</h2>
+      </div>
+      <table class="kv" id="t_link"></table>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <h2>Speed test</h2>
+        <button class="btn" id="b_iperf" onclick="iperfStart()">Start</button>
+        <button class="btn btn-danger" id="b_iperf_stop" onclick="post('/network/iperf/stop')">Stop</button>
+      </div>
+      <div class="form">
+        <label class="field">Mode
+          <select id="ip_mode" onchange="renderHint()">
+            <option value="server">PC → device (device is server)</option>
+            <option value="client">Device → PC (device is client)</option>
+          </select>
+        </label>
+        <label class="field">Protocol
+          <select id="ip_proto" onchange="renderHint()">
+            <option value="tcp">TCP</option>
+            <option value="udp">UDP</option>
+          </select>
+        </label>
+        <label class="field" id="l_host">PC address
+          <input type="text" id="ip_host" oninput="renderHint()">
+        </label>
+        <label class="field">Port
+          <input type="number" id="ip_port" value="5001" min="1" max="65535" oninput="renderHint()">
+        </label>
+        <label class="field">Seconds
+          <input type="number" id="ip_time" value="10" min="1" max="60" oninput="renderHint()">
+        </label>
+        <label class="field" id="l_bw">UDP Mbit/s
+          <input type="number" id="ip_bw" value="20" min="1" max="100" oninput="renderHint()">
+        </label>
+      </div>
+      <div class="hint-row">
+        <div class="hint" id="ip_hint"></div>
+        <button class="btn" id="b_copy" onclick="copyHint()">Copy command</button>
+      </div>
+      <div class="alert" id="ip_status"></div>
+      <div class="chart" id="ip_chart"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <h2>Ping</h2>
+        <button class="btn" id="b_ping" onclick="pingStart()">Ping</button>
+      </div>
+      <div class="form">
+        <label class="field">Host or IP
+          <input type="text" id="pg_host">
+        </label>
+        <label class="field">Count
+          <input type="number" id="pg_count" value="4" min="1" max="100">
+        </label>
+        <label class="field">Size (bytes)
+          <input type="number" id="pg_size" value="64" min="1" max="65500">
+        </label>
+        <label class="field">Interval (ms)
+          <input type="number" id="pg_interval" value="1000" min="10" max="60000">
+        </label>
+        <label class="field">Timeout (ms)
+          <input type="number" id="pg_timeout" value="1000" min="10" max="10000">
+        </label>
+      </div>
+      <div class="alert" id="pg_status"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <h2>WiFi scan</h2>
+        <button class="btn" id="b_scan" onclick="post('/network/scan')">Scan</button>
+      </div>
+      <div class="alert" id="sc_status"></div>
+      <div class="scroll">
+        <table id="t_scan"></table>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    var last = null;
+    var prefilled = false;
+    var hintCommand = '';
+
+    function $(id) { return document.getElementById(id); }
+
+    function setStatus(id, text, isError) {
+      var el = $(id);
+      el.textContent = text;
+      el.className = 'alert' + (isError ? ' error' : '');
+    }
+
+    function post(url, body) {
+      return fetch(url, { method: 'POST', body: JSON.stringify(body || {}) })
+        .then(function (r) {
+          if (!r.ok) {
+            return r.text().then(function (t) { throw new Error(t || ('HTTP ' + r.status)); });
+          }
+          poll(true);
+        })
+        .catch(function (e) { alert(e.message); });
+    }
+
+    function mbps(bps) {
+      return (bps / 1e6).toFixed(2) + ' Mbit/s';
+    }
+
+    /* ---- Connection ---- */
+
+    function renderLink(d) {
+      var h = '';
+      (d.link || []).forEach(function (row) {
+        h += '<tr><td>' + esc(row.label) + '</td><td>' + esc(row.value) + '</td></tr>';
+      });
+      $('t_link').innerHTML = h;
+
+      if (!prefilled) {
+        $('ip_host').value = d.client_ip || '';
+        $('pg_host').value = d.gateway || '';
+        prefilled = true;
+      }
+    }
+
+    /* ---- iperf ---- */
+
+    function renderHint() {
+      var mode = $('ip_mode').value;
+      var udp = $('ip_proto').value === 'udp';
+      var port = $('ip_port').value;
+      var time = $('ip_time').value;
+      var ip = last ? last.device_ip : '<device>';
+      var u = udp ? ' -u' : '';
+
+      $('l_host').style.display = mode === 'client' ? '' : 'none';
+      $('l_bw').style.display = udp ? '' : 'none';
+
+      if (mode === 'server') {
+        hintCommand = 'iperf -c ' + ip + u + ' -p ' + port + ' -t ' + time + ' -i 1' +
+          (udp ? ' -b ' + $('ip_bw').value + 'M' : '');
+        $('ip_hint').innerHTML = 'Click Start, then within ' + (udp ? 10 : 5) +
+          ' s run on the PC:<br><code>' + esc(hintCommand) + '</code>';
+      } else {
+        hintCommand = 'iperf -s' + u + ' -p ' + port + ' -i 1';
+        $('ip_hint').innerHTML = 'First run on the PC:<br><code>' + esc(hintCommand) +
+          '</code><br>then click Start.';
+      }
+    }
+
+    function copyHint() {
+      var done = function (ok) {
+        var button = $('b_copy');
+        button.textContent = ok ? 'Copied' : 'Copy failed';
+        setTimeout(function () { button.textContent = 'Copy command'; }, 1500);
+      };
+
+      if (navigator.clipboard && window.isSecureContext) {
+        navigator.clipboard.writeText(hintCommand).then(
+          function () { done(true); },
+          function () { done(false); });
+        return;
+      }
+
+      /* The panel is served over plain HTTP, where navigator.clipboard is unavailable. */
+      var area = document.createElement('textarea');
+      area.value = hintCommand;
+      area.style.position = 'fixed';
+      area.style.opacity = '0';
+      document.body.appendChild(area);
+      area.select();
+      var ok = false;
+      try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+      document.body.removeChild(area);
+      done(ok);
+    }
+
+    function iperfStart() {
+      post('/network/iperf', {
+        mode: $('ip_mode').value,
+        protocol: $('ip_proto').value,
+        host: $('ip_host').value.trim(),
+        port: Number($('ip_port').value),
+        time: Number($('ip_time').value),
+        bandwidth_kbps: Number($('ip_bw').value) * 1000
+      });
+    }
+
+    function renderIperf(r) {
+      var running = r && r.state === 'running';
+      $('b_iperf').disabled = running;
+      $('b_iperf_stop').disabled = !running;
+
+      if (!r || r.state === 'idle') {
+        setStatus('ip_status', '');
+        $('ip_chart').innerHTML = '';
+        return;
+      }
+
+      var dir = r.mode === 'server' ? 'PC → device' : 'device → PC';
+      var text = r.protocol.toUpperCase() + ', ' + dir + ': ';
+
+      if (r.state === 'failed') {
+        var why = r.error === 'ESP_ERR_TIMEOUT' ? 'no client connected in time'
+          : r.mode === 'client' ? 'could not connect — is "iperf -s" running on the PC?'
+          : r.error;
+        setStatus('ip_status', text + 'failed (' + why + ')', true);
+      } else if (running && !r.transferring && r.periods.length === 0) {
+        setStatus('ip_status', text + (r.mode === 'server' ? 'waiting for the PC...' : 'connecting...'));
+      } else {
+        var el = $('ip_status');
+        el.className = 'alert';
+        el.innerHTML = text + (running ? 'running' : 'done') + '<br><span class="big">' +
+          mbps(r.average_bps) + '</span> average, ' + (r.total_bytes / 1e6).toFixed(1) + ' MB';
+      }
+
+      var peak = Math.max.apply(null, r.periods.concat([1]));
+      $('ip_chart').innerHTML = r.periods.map(function (bps, i) {
+        return '<span title="' + (i + 1) + ' s: ' + mbps(bps) + '" style="height:' +
+          Math.round(100 * bps / peak) + '%"></span>';
+      }).join('');
+    }
+
+    /* ---- Ping ---- */
+
+    function pingStart() {
+      post('/network/ping', {
+        host: $('pg_host').value.trim(),
+        count: Number($('pg_count').value),
+        size: Number($('pg_size').value),
+        interval_ms: Number($('pg_interval').value),
+        timeout_ms: Number($('pg_timeout').value)
+      });
+    }
+
+    function renderPing(p) {
+      var running = p && p.state === 'running';
+      $('b_ping').disabled = running;
+
+      if (!p || p.state === 'idle') { return; }
+
+      var target = esc(p.host) + (p.address && p.address !== p.host ? ' (' + esc(p.address) + ')' : '');
+
+      if (p.state === 'failed') {
+        setStatus('pg_status', 'Ping ' + p.host + ' failed: ' +
+          (p.error === 'ESP_ERR_NOT_FOUND' ? 'host not found' : p.error), true);
+        return;
+      }
+
+      var loss = p.sent ? Math.round(100 * (p.sent - p.received) / p.sent) : 0;
+      var el = $('pg_status');
+      el.className = 'alert';
+      el.innerHTML = target + ', ' + p.size + ' B every ' + p.interval_ms + ' ms: ' + p.received + '/' + p.sent + ' replies' +
+        (running ? ' of ' + p.count + '…' : '') + ', ' + loss + ' % loss' +
+        (p.received ? '<br>min / avg / max = ' + p.min_ms + ' / ' + p.avg_ms.toFixed(1) +
+          ' / ' + p.max_ms + ' ms, last ' + p.last_ms + ' ms' : '');
+    }
+
+    /* ---- Scan ---- */
+
+    function renderScan(s, link) {
+      var running = s && s.state === 'running';
+      $('b_scan').disabled = running;
+
+      if (!s || s.state === 'idle') { return; }
+
+      if (running) {
+        setStatus('sc_status', 'Scanning...');
+        return;
+      }
+
+      if (s.state === 'failed') {
+        setStatus('sc_status', 'Scan failed: ' + s.error, true);
+        return;
+      }
+
+      var mine = '';
+      (link || []).forEach(function (row) { if (row.label === 'BSSID') { mine = row.value; } });
+
+      var channels = {};
+      s.aps.forEach(function (ap) { channels[ap.channel] = (channels[ap.channel] || 0) + 1; });
+      var usage = Object.keys(channels).sort(function (a, b) { return a - b; })
+        .map(function (c) { return c + ': ' + channels[c]; }).join(', ');
+
+      setStatus('sc_status', s.found + ' networks' +
+        (s.found > s.aps.length ? ' (strongest ' + s.aps.length + ' shown)' : '') +
+        '. APs per channel — ' + usage);
+
+      var h = '<thead><tr><th>SSID</th><th>BSSID</th><th class="num">Ch</th>' +
+        '<th class="num">RSSI</th><th>Security</th></tr></thead><tbody>';
+      s.aps.forEach(function (ap) {
+        var q = Math.max(0, Math.min(100, 2 * (ap.rssi + 100)));
+        h += '<tr' + (ap.bssid === mine ? ' class="mine"' : '') + '><td>' +
+          (ap.ssid ? esc(ap.ssid) : '<span class="muted">hidden</span>') + '</td><td class="mono">' +
+          esc(ap.bssid) + '</td><td class="num">' + ap.channel +
+          '</td><td class="num"><span class="meter"><span style="width:' + q + '%"></span></span>' +
+          ap.rssi + ' dBm</td><td>' + esc(ap.auth) + '</td></tr>';
+      });
+      $('t_scan').innerHTML = h + '</tbody>';
+    }
+
+    /* ---- Polling ---- */
+
+    var timer = null;
+
+    function poll(soon) {
+      clearTimeout(timer);
+
+      if (soon) {
+        timer = setTimeout(poll, 300);
+        return;
+      }
+
+      if (document.hidden) {
+        timer = setTimeout(poll, 1000);
+        return;
+      }
+
+      fetch('/network/data', { cache: 'no-store' })
+        .then(function (r) {
+          if (!r.ok) { throw new Error('HTTP ' + r.status); }
+          return r.json();
+        })
+        .then(function (d) {
+          last = d;
+          renderLink(d);
+          renderIperf(d.iperf);
+          renderPing(d.ping);
+          renderScan(d.scan, d.link);
+          renderHint();
+          panelStatus('Updated ' + new Date().toLocaleTimeString(), 'ok');
+          timer = setTimeout(poll, 1000);
+        })
+        .catch(function (e) {
+          panelStatus('Error: ' + e.message + ' — retrying...', 'error');
+          timer = setTimeout(poll, 3000);
+        });
+    }
+
+    renderHint();
+    poll();
+  </script>
+</body>
+
+</html>

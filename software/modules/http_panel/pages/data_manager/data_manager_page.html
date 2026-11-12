@@ -1,0 +1,423 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ESP32S3 — Data</title>
+  <link rel="stylesheet" href="/panel.css">
+  <style>
+    td.name {
+      overflow-wrap: anywhere;
+    }
+
+    td.name small {
+      display: block;
+      color: var(--text-dim);
+      font-size: .8em;
+    }
+
+    td.input {
+      width: 40%;
+    }
+
+    /* Not "actions": panel.css makes .actions a flex row, which breaks the cell. */
+    td.controls {
+      white-space: nowrap;
+      text-align: right;
+      width: 1%;
+    }
+
+    /* Same font, line height, padding and border as the input, so heights match. */
+    td.controls .btn {
+      font-size: .95em;
+      line-height: 1.5;
+      padding: 8px 12px;
+    }
+
+    tr.dirty td:first-child {
+      box-shadow: inset 3px 0 var(--accent);
+    }
+
+    tr.dirty input {
+      border-color: var(--accent);
+    }
+
+    tr.failed td:first-child {
+      box-shadow: inset 3px 0 var(--danger);
+    }
+
+    tr.failed input {
+      border-color: var(--danger);
+    }
+
+    .err {
+      color: var(--danger);
+    }
+  </style>
+</head>
+
+<body>
+  <header id="panel-header"></header>
+  <script src="/panel.js"></script>
+
+  <main class="panel-main">
+    <div class="alert" id="result"></div>
+
+    <div class="card">
+      <div class="card-head">
+        <h2>Settings</h2>
+        <span class="badge" id="unapplied"></span>
+        <span class="badge warn" id="unsaved"></span>
+        <button class="btn btn-secondary" onclick="refresh()">Refresh</button>
+        <button class="btn btn-secondary" id="btn_discard" onclick="discard()">Discard</button>
+        <button class="btn" id="btn_apply" onclick="applyAll()">Apply</button>
+        <button class="btn" id="btn_save" onclick="save()">Save</button>
+        <button class="btn btn-danger" id="btn_reset_all" onclick="resetAll()">Reset all</button>
+      </div>
+      <table id="t_settings"></table>
+    </div>
+  </main>
+
+  <script>
+    var INTEGER_TYPES = ['u8', 'u16', 'u32', 'i8', 'i16', 'i32'];
+
+    function el(tag, cls, text) {
+      var e = document.createElement(tag);
+      if (cls) { e.className = cls; }
+      if (text !== undefined) { e.textContent = text; }
+      return e;
+    }
+
+    function showResult(ok, msg) {
+      var r = document.getElementById('result');
+      r.className = 'alert ' + (ok ? 'ok' : 'error');
+      r.textContent = msg;
+    }
+
+    function nameCell(d) {
+      var td = el('td', 'name', d.name);
+      var info = d.type;
+      if (d.min !== undefined) { info += ', ' + d.min + '..' + d.max; }
+      if (d.type === 'string') { info += ', max ' + (d.size - 1) + ' chars'; }
+      td.appendChild(el('small', '', info));
+      return td;
+    }
+
+    function makeInput(d) {
+      var input = el('input');
+
+      if (d.type === 'bool') {
+        input.type = 'checkbox';
+        input.checked = (d.value === 'true');
+      } else if (d.secret) {
+        input.type = 'password';
+        input.autocomplete = 'new-password';
+        input.placeholder = d.has_value ? '******** (set)' : '(empty)';
+      } else if (INTEGER_TYPES.indexOf(d.type) >= 0) {
+        input.type = 'number';
+        input.step = '1';
+        if (d.min !== undefined) { input.min = d.min; input.max = d.max; }
+        input.value = d.value;
+      } else if (d.type === 'float') {
+        input.type = 'number';
+        input.step = 'any';
+        input.value = d.value;
+      } else {
+        input.type = 'text';
+        if (d.type === 'string') { input.maxLength = d.size - 1; }
+        if (d.type === 'blob') { input.placeholder = (d.size * 2) + ' hex digits'; }
+        input.value = d.value;
+      }
+
+      return input;
+    }
+
+    function inputText(d, input) {
+      return (d.type === 'bool') ? (input.checked ? 'true' : 'false') : input.value;
+    }
+
+    // Secrets are never sent to the page, so their input starts empty.
+    function originalText(d) {
+      return d.secret ? '' : String(d.value);
+    }
+
+    function setInputText(d, input, text) {
+      if (d.type === 'bool') { input.checked = (text === 'true'); } else { input.value = text; }
+    }
+
+    // Edited values not yet sent to /data/set, keyed by entry name. They
+    // survive a re-render so Refresh or a failed apply doesn't lose them.
+    var pending = {};
+    var failed = {};
+    var applying = false;
+    var lastData = null;
+
+    function pendingCount() {
+      return Object.keys(pending).length;
+    }
+
+    function updateButtons() {
+      var count = pendingCount();
+      document.getElementById('unapplied').textContent = count ? count + ' not applied' : '';
+      document.getElementById('btn_apply').textContent = count ? 'Apply (' + count + ')' : 'Apply';
+      document.getElementById('btn_apply').disabled = applying || (count === 0);
+      document.getElementById('btn_discard').disabled = applying || (count === 0);
+      document.getElementById('btn_save').disabled =
+        applying || !(lastData && lastData.unsaved);
+      document.getElementById('btn_reset_all').disabled = applying || !lastData;
+    }
+
+    function track(d, input, tr) {
+      var text = inputText(d, input);
+
+      if (text === originalText(d)) {
+        delete pending[d.name];
+      } else {
+        pending[d.name] = text;
+      }
+
+      delete failed[d.name];
+      tr.classList.toggle('dirty', pending.hasOwnProperty(d.name));
+      tr.classList.remove('failed');
+      updateButtons();
+    }
+
+    function settingRow(d) {
+      var tr = el('tr');
+      tr.appendChild(nameCell(d));
+
+      var td_input = el('td', 'input');
+      var td_controls = el('td', 'controls');
+
+      if (d.error) {
+        td_input.appendChild(el('span', 'err', d.error));
+      } else {
+        var input = makeInput(d);
+
+        if (pending.hasOwnProperty(d.name)) {
+          if (pending[d.name] === originalText(d)) {
+            delete pending[d.name];
+          } else {
+            setInputText(d, input, pending[d.name]);
+            tr.className = failed[d.name] ? 'failed' : 'dirty';
+          }
+        }
+
+        input.oninput = function () { track(d, input, tr); };
+        input.onchange = input.oninput;
+        input.onkeydown = function (e) {
+          if (e.key === 'Enter') { applyAll(); }
+        };
+        td_input.appendChild(input);
+      }
+
+      var reset = el('button', 'btn btn-danger', 'Reset');
+      reset.onclick = function () { resetValue(d); };
+      td_controls.appendChild(reset);
+
+      tr.appendChild(td_input);
+      tr.appendChild(td_controls);
+      return tr;
+    }
+
+    function fillTable(rows) {
+      var table = document.getElementById('t_settings');
+      var body = el('tbody');
+      table.textContent = '';
+
+      if (rows.length === 0) {
+        var tr = el('tr');
+        tr.appendChild(el('td', 'muted', 'No entries'));
+        body.appendChild(tr);
+      }
+
+      for (var i = 0; i < rows.length; i++) { body.appendChild(rows[i]); }
+      table.appendChild(body);
+    }
+
+    function render(data) {
+      var rows = [];
+      var editable = {};
+
+      lastData = data;
+
+      for (var i = 0; i < data.entries.length; i++) {
+        rows.push(settingRow(data.entries[i]));
+        editable[data.entries[i].name] = true;
+      }
+
+      Object.keys(pending).forEach(function (name) {
+        if (!editable[name]) { delete pending[name]; }
+      });
+
+      fillTable(rows);
+
+      document.getElementById('unsaved').textContent = data.unsaved ? 'Not saved to flash' : '';
+      updateButtons();
+      panelStatus(data.entries.length + ' entries, updated ' + new Date().toLocaleTimeString(), 'ok');
+    }
+
+    function refresh() {
+      return fetch('/data/list', { cache: 'no-store' })
+        .then(function (r) {
+          if (!r.ok) { throw new Error('HTTP ' + r.status); }
+          return r.json();
+        })
+        .then(render)
+        .catch(function (e) {
+          panelStatus('Load failed: ' + e.message, 'error');
+        });
+    }
+
+    function post(uri, body, okMsg) {
+      var options = { method: 'POST' };
+      if (body) {
+        options.headers = { 'Content-Type': 'application/json' };
+        options.body = JSON.stringify(body);
+      }
+
+      fetch(uri, options)
+        .then(function (r) {
+          return r.text().then(function (t) {
+            if (r.ok) { showResult(true, okMsg); } else { showResult(false, t || ('HTTP ' + r.status)); }
+          });
+        })
+        .catch(function (e) { showResult(false, 'Request failed: ' + e.message); })
+        .then(refresh);
+    }
+
+    function setValue(name, text) {
+      return fetch('/data/set', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: name, value: text })
+      }).then(function (r) {
+        return r.text().then(function (t) {
+          if (!r.ok) { throw new Error(t || ('HTTP ' + r.status)); }
+        });
+      });
+    }
+
+    // One request at a time: the device has only a handful of sockets.
+    function applyAll() {
+      var names = Object.keys(pending);
+      var errors = [];
+
+      if (applying || (names.length === 0)) { return; }
+
+      applying = true;
+      updateButtons();
+
+      var chain = Promise.resolve();
+      names.forEach(function (name) {
+        chain = chain.then(function () {
+          return setValue(name, pending[name]).then(function () {
+            delete pending[name];
+            delete failed[name];
+          }, function (e) {
+            failed[name] = true;
+            errors.push(name + ': ' + e.message);
+          });
+        });
+      });
+
+      chain.then(function () {
+        var applied = names.length - errors.length;
+
+        if (errors.length === 0) {
+          showResult(true, applied + ' setting(s) applied (not saved to flash yet)');
+        } else {
+          showResult(false, 'Applied ' + applied + ' of ' + names.length + '. Failed: '
+            + errors.join('; '));
+        }
+
+        applying = false;
+        return refresh();
+      });
+    }
+
+    function discard() {
+      pending = {};
+      failed = {};
+      if (lastData) { render(lastData); }
+    }
+
+    // WiFi credentials are kept so the device stays reachable; a full wipe
+    // is the Dashboard's factory reset.
+    var RESET_ALL_SKIP_PREFIX = 'network_wifi_';
+
+    function resetAll() {
+      if (applying || !lastData) { return; }
+
+      var names = lastData.entries.filter(function (d) {
+        return !d.error && (d.name.indexOf(RESET_ALL_SKIP_PREFIX) !== 0);
+      }).map(function (d) { return d.name; });
+
+      if (!confirm('Reset ' + names.length + ' settings to their defaults?\n'
+        + 'WiFi settings are kept. This is saved to flash immediately.')) {
+        return;
+      }
+
+      var errors = [];
+      var chain = Promise.resolve();
+
+      applying = true;
+      updateButtons();
+
+      names.forEach(function (name) {
+        chain = chain.then(function () {
+          return fetch('/data/reset', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: name })
+          }).then(function (r) {
+            return r.text().then(function (t) {
+              if (!r.ok) { throw new Error(t || ('HTTP ' + r.status)); }
+              delete pending[name];
+              delete failed[name];
+            });
+          }).catch(function (e) {
+            errors.push(name + ': ' + e.message);
+          });
+        });
+      });
+
+      chain.then(function () {
+        if (errors.length === 0) {
+          showResult(true, names.length + ' settings reset to defaults (saved)');
+        } else {
+          showResult(false, 'Reset ' + (names.length - errors.length) + ' of ' + names.length
+            + '. Failed: ' + errors.join('; '));
+        }
+
+        applying = false;
+        return refresh();
+      });
+    }
+
+    function resetValue(d) {
+      if (!confirm('Reset ' + d.name + ' to its default?\nThis is saved to flash immediately.')) {
+        return;
+      }
+      delete pending[d.name];
+      delete failed[d.name];
+      post('/data/reset', { name: d.name }, d.name + ' reset to default (saved)');
+    }
+
+    function save() {
+      var count = pendingCount();
+
+      if (count && !confirm(count + ' edited setting(s) are not applied and will not be saved.'
+        + '\nSave the applied values anyway?')) {
+        return;
+      }
+      post('/data/save', null, 'Saved');
+    }
+
+    panelStatus('Loading...', 'busy');
+    refresh();
+  </script>
+</body>
+
+</html>

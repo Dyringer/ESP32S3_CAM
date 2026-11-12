@@ -1,0 +1,11 @@
+idf_component_register(
+    SRCS
+        "hash.c"
+        "work_queue.c"
+    INCLUDE_DIRS
+        "."
+    PRIV_REQUIRES
+        esp_timer
+        freertos
+        log
+)

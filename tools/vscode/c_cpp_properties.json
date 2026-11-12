@@ -1,0 +1,16 @@
+{
+    "configurations": [
+        {
+            "name": "ESP32-S3 (ESP-IDF)",
+            "intelliSenseMode": "gcc-x64",
+            "compilerPath": "${command:espIdf.getToolchainGcc}",
+            "cStandard": "c17",
+            "cppStandard": "c++23",
+            "compileCommands": "${workspaceFolder}/_build_debug/compile_commands.json",
+            "includePath": [
+                "${workspaceFolder}/software/**"
+            ]
+        }
+    ],
+    "version": 4
+}

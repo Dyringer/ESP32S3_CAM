@@ -1,0 +1,62 @@
+---
+:project:
+  :use_exceptions: FALSE
+  :use_mocks: TRUE
+  :build_root: build
+  :release_build: FALSE
+  :test_file_prefix: test_
+  :which_ceedling: gem
+  :ceedling_version: 1.0.1
+
+:paths:
+  :test:
+    - "@CMAKE_CURRENT_SOURCE_DIR@/tests/**"
+  :source:
+    - "@CMAKE_SOURCE_DIR@/software/modules/**"
+    # cJSON is a registry component; the JSON codec tests build it for the host.
+    - "@CMAKE_SOURCE_DIR@/managed_components/espressif__cjson/cJSON"
+  # Host fakes of the ESP-IDF and FreeRTOS headers the modules include.
+  :support:
+    - "@CMAKE_CURRENT_SOURCE_DIR@/support"
+  :include:
+    - "@CMAKE_CURRENT_SOURCE_DIR@/support"
+    - "@CMAKE_SOURCE_DIR@/software/modules/**"
+    - "@CMAKE_SOURCE_DIR@/managed_components/espressif__cjson/cJSON"
+
+:defines:
+  :common: &common_defines
+    - UNIT_TEST=1
+  :test:
+    - *common_defines
+
+:flags:
+  :test:
+    :compile:
+      :*:
+        - -Wall
+        - -Wextra
+    :link:
+      :*:
+        # cJSON uses isnan/floor from libm.
+        - -lm
+
+:cmock:
+  :mock_prefix: mock_
+  # callback: the codec asks for role, function and pin names many times per
+  # message, so tests install lookup callbacks instead of counting Expect calls.
+  :plugins:
+    - :ignore
+    - :callback
+
+:tools:
+  :test_compiler:
+    :executable: gcc
+  :test_linker:
+    :executable: gcc
+
+:plugins:
+  :enabled:
+    - module_generator
+    - report_tests_pretty_stdout
+
+...

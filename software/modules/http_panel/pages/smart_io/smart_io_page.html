@@ -1,0 +1,2416 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ESP32S3 — IO</title>
+  <link rel="stylesheet" href="/panel.css">
+  <style>
+    /* ---- Sub-tabs ---- */
+
+    .subtabs {
+      display: flex;
+      gap: 4px;
+      padding: 4px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      overflow-x: auto;
+      scrollbar-width: none;
+    }
+
+    .subtabs a {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      padding: 7px 12px;
+      border-radius: var(--radius-sm);
+      color: var(--text-dim);
+      text-decoration: none;
+      font-size: .88em;
+      font-weight: 550;
+      white-space: nowrap;
+      transition: background .15s, color .15s;
+    }
+
+    .subtabs a:hover {
+      color: var(--text);
+    }
+
+    .subtabs a.active {
+      background: var(--accent-soft);
+      color: var(--accent);
+    }
+
+    .subtabs a.off {
+      opacity: .5;
+    }
+
+    .subtabs .badge {
+      font-size: .7em;
+    }
+
+    .tab {
+      display: none;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .tab.active {
+      display: flex;
+    }
+
+    /* ---- Graph ---- */
+
+    /* Categorical slots 1, 2, 3, 7 of the dataviz reference palette (validated in both
+     * modes), one per signal kind. Lane labels carry identity, colour is secondary. */
+    .graph {
+      --viz-digital: #3987e5;
+      --viz-analog: #d95926;
+      --viz-step: #199e70;
+      --viz-marker: #9085e9;
+    }
+
+    @media (prefers-color-scheme: light) {
+      .graph {
+        --viz-digital: #2a78d6;
+        --viz-analog: #eb6834;
+        --viz-step: #1baf7a;
+        --viz-marker: #6250d6;
+      }
+    }
+
+    .swatch {
+      display: inline-block;
+      flex: none;
+      width: 10px;
+      height: 10px;
+      border-radius: 2px;
+    }
+
+    .graph-wrap {
+      position: relative;
+      margin-top: 14px;
+    }
+
+    .graph-wrap canvas {
+      display: block;
+      width: 100%;
+      cursor: crosshair;
+    }
+
+    .graph-wrap canvas.dragging {
+      cursor: grabbing;
+    }
+
+    .graph-tip {
+      position: absolute;
+      display: none;
+      pointer-events: none;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      box-shadow: 0 4px 14px rgba(0, 0, 0, .25);
+      padding: 7px 10px;
+      font-size: .78em;
+      line-height: 1.6;
+      white-space: nowrap;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .graph-tip div {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+    }
+
+    .graph-tip b {
+      margin-left: auto;
+      padding-left: 14px;
+      font-weight: 600;
+    }
+
+    /* ---- Pin table ---- */
+
+    table.pins tbody tr {
+      cursor: pointer;
+    }
+
+    table.pins td {
+      padding: 8px 6px;
+    }
+
+    table.pins td.gpio {
+      font-weight: 650;
+      white-space: nowrap;
+      border-left: 3px solid transparent;
+    }
+
+    table.pins small {
+      display: block;
+      font-weight: 400;
+      font-size: .78em;
+      color: var(--text-faint);
+      white-space: nowrap;
+    }
+
+    table.pins td.value {
+      font-weight: 600;
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+    }
+
+    table.pins td.settings {
+      white-space: normal;
+      font-size: .85em;
+    }
+
+    /* Narrow-screen variants of the Function cell, hidden while the Settings column exists. */
+    table.pins .fn-short,
+    table.pins .fn-settings {
+      display: none;
+    }
+
+    table.pins tr.selected td {
+      background: var(--accent-soft);
+    }
+
+    table.pins tr.disabled td:not(.gpio) {
+      opacity: .5;
+    }
+
+    table.pins tr.free td.fn {
+      color: var(--text-faint);
+    }
+
+    table.pins tr.bus-i2c td.gpio {
+      border-left-color: #8e24aa;
+    }
+
+    table.pins tr.bus-uart td.gpio {
+      border-left-color: #00897b;
+    }
+
+    table.pins tr.flash td {
+      animation: row-flash .6s;
+    }
+
+    @keyframes row-flash {
+      from {
+        background: var(--ok-soft);
+      }
+    }
+
+    .led {
+      display: inline-block;
+      flex: none;
+      width: 11px;
+      height: 11px;
+      border-radius: 50%;
+      background: var(--text-faint);
+    }
+
+    .led.on {
+      background: var(--ok);
+      box-shadow: 0 0 0 3px var(--ok-soft);
+    }
+
+    .live {
+      margin-top: 16px;
+      padding-top: 14px;
+      border-top: 1px solid var(--border);
+      display: flex;
+      flex-wrap: wrap;
+      gap: 14px;
+      align-items: center;
+    }
+
+    .live-value {
+      font-size: 1.4em;
+      font-weight: 650;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .live input[type=range] {
+      width: 220px;
+    }
+
+    .btn.on {
+      background: var(--ok);
+      color: #fff;
+    }
+
+    .addr-grid {
+      display: grid;
+      grid-template-columns: repeat(16, 1fr);
+      gap: 2px;
+      font-family: var(--mono);
+      font-size: .68em;
+      margin-top: 12px;
+    }
+
+    .addr-grid span {
+      text-align: center;
+      padding: 3px 0;
+      border-radius: 3px;
+      color: var(--text-faint);
+      background: var(--surface-2);
+    }
+
+    .addr-grid span.found {
+      background: var(--ok-soft);
+      color: var(--ok);
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    .addr-grid span.reserved {
+      background: transparent;
+    }
+
+    .terminal {
+      font-family: var(--mono);
+      font-size: .8em;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 8px 10px;
+      height: 160px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+
+    .terminal .tx {
+      color: var(--accent);
+    }
+
+    .terminal .rx {
+      color: var(--text);
+    }
+
+    .terminal .lost {
+      color: var(--danger);
+    }
+
+    .traffic {
+      font-family: var(--mono);
+      font-size: .75em;
+      max-height: 260px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+
+    .traffic .out {
+      color: var(--accent);
+    }
+
+    .traffic .in {
+      color: var(--ok);
+    }
+
+    .traffic .evt {
+      color: var(--warn);
+    }
+
+    .traffic .err {
+      color: var(--danger);
+    }
+
+    .inline {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      font-size: .85em;
+      color: var(--text-dim);
+    }
+
+    .subtab-links {
+      display: flex;
+      flex: 1;
+      gap: 4px;
+      min-width: 0;
+    }
+
+    .save-bar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-left: 4px;
+      padding: 0 4px 0 12px;
+      border-left: 1px solid var(--border);
+    }
+
+    .save-bar .badge {
+      font-size: .72em;
+    }
+
+    /* ---- Inline controls in the pin table ---- */
+
+    .pin-ctl {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      white-space: nowrap;
+    }
+
+    .pin-ctl small {
+      display: inline;
+      font-size: .8em;
+      font-weight: 400;
+      color: var(--text-dim);
+    }
+
+    .level-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      padding: 3px 11px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: var(--surface-2);
+      color: var(--text);
+      font: inherit;
+      font-size: .92em;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    .level-btn:hover {
+      border-color: var(--accent);
+    }
+
+    input[type=range].mini {
+      width: 96px;
+    }
+
+    .btn-xs {
+      padding: 3px 10px;
+      font-size: .76em;
+    }
+
+    .icon-btn {
+      display: inline-grid;
+      place-items: center;
+      width: 28px;
+      height: 28px;
+      border-radius: var(--radius-sm);
+      border: 1px solid transparent;
+      background: transparent;
+      color: var(--text-faint);
+      cursor: pointer;
+    }
+
+    .icon-btn svg {
+      width: 16px;
+      height: 16px;
+    }
+
+    .icon-btn:hover {
+      color: var(--text);
+      background: var(--surface-2);
+    }
+
+    .icon-btn.on {
+      color: var(--accent);
+      background: var(--accent-soft);
+    }
+
+    table.pins td.gpio b {
+      font-weight: 650;
+    }
+
+    table.pins tbody tr:focus-visible td {
+      outline: none;
+      background: var(--surface-2);
+    }
+
+    /* ---- I2C history ---- */
+
+    table.history td.time {
+      font-family: var(--mono);
+      font-size: .82em;
+      white-space: nowrap;
+      width: 1%;
+    }
+
+    .graph-wrap canvas {
+      touch-action: pan-y;
+    }
+
+    /* ---- Touch screens (any width, e.g. a phone in landscape) ---- */
+
+    @media (pointer: coarse) {
+      .level-btn,
+      .btn-xs {
+        min-height: 36px;
+        padding: 6px 16px;
+        font-size: .9em;
+      }
+
+      input[type=range].mini {
+        width: 160px;
+      }
+
+      .icon-btn {
+        width: 40px;
+        height: 40px;
+      }
+    }
+
+    /* ---- Phones ---- */
+
+    @media (max-width: 640px) {
+      .panel-main {
+        padding: 12px 10px 32px;
+        gap: 12px;
+      }
+
+      .card {
+        padding: 14px;
+      }
+
+
+      .subtabs {
+        flex-wrap: wrap;
+      }
+
+      .subtab-links {
+        flex: 1 1 100%;
+        overflow-x: auto;
+        scrollbar-width: none;
+      }
+
+      .subtabs a {
+        flex: 1 0 auto;
+        padding: 9px 12px;
+      }
+
+      .save-bar {
+        flex: 1 1 100%;
+        justify-content: flex-end;
+        margin: 4px 0 0;
+        padding: 6px 2px 2px;
+        border-left: none;
+        border-top: 1px solid var(--border);
+      }
+
+      /* Pin table keeps its columns; the Settings text moves under the function. */
+      table.pins th.settings,
+      table.pins td.settings,
+      table.pins .fn-long {
+        display: none;
+      }
+
+      table.pins .fn-short {
+        display: inline;
+      }
+
+      table.pins .fn-settings {
+        display: block;
+      }
+
+      table.pins th {
+        padding: 0 4px 5px;
+      }
+
+      table.pins td,
+      .scroll table.pins td {
+        padding: 8px 4px;
+        white-space: normal;
+      }
+
+      table.pins small {
+        white-space: normal;
+      }
+
+      .pin-ctl {
+        flex-wrap: wrap;
+        gap: 4px 8px;
+        white-space: normal;
+      }
+
+      input[type=range].mini {
+        width: 80px;
+      }
+
+      .icon-btn {
+        width: 34px;
+        height: 34px;
+      }
+
+      .addr-grid {
+        grid-template-columns: repeat(8, 1fr);
+        font-size: .8em;
+      }
+
+      .addr-grid span {
+        padding: 6px 0;
+      }
+
+      .terminal {
+        height: 220px;
+      }
+
+      .graph-tip {
+        font-size: .74em;
+      }
+    }
+    /* ---- Inline pin editor (row under the selected pin) ---- */
+
+    table.pins tr.editor-row td,
+    table.pins tbody tr.editor-row:hover td {
+      background: var(--accent-soft);
+      cursor: default;
+      white-space: normal;
+      padding: 4px 12px 16px;
+    }
+
+    /* Apply/Release left, Close right. */
+    .editor-actions {
+      justify-content: space-between;
+      margin-top: 14px;
+    }
+
+    .editor-actions > .actions:last-child {
+      margin-left: auto;
+    }
+
+    /* Labels line up even though the panel's selects are a few px shorter than inputs. */
+    .pin-editor .form {
+      align-items: start;
+      padding-top: 12px;
+    }
+  </style>
+</head>
+
+<body>
+  <header id="panel-header"></header>
+  <script src="/panel.js"></script>
+
+  <main class="panel-main">
+    <div class="alert" id="a_msg"></div>
+
+    <!-- ---- Sub-tabs + configuration state (selection kept in the URL hash) ---- -->
+    <nav class="subtabs">
+      <div class="subtab-links">
+        <a href="#pins" data-tab="pins">Pins</a>
+        <a href="#i2c" data-tab="i2c">I2C</a>
+        <a href="#uart" data-tab="uart">UART</a>
+        <a href="#debug" data-tab="debug" id="tab_link_debug" style="display:none">Debug</a>
+      </div>
+      <div class="save-bar">
+        <span class="badge warn" id="b_unsaved">unsaved</span>
+        <button class="btn btn-secondary btn-sm" id="btn_revert" onclick="revertConfig()">Revert</button>
+        <button class="btn btn-sm" id="btn_save" onclick="saveConfig()">Save</button>
+      </div>
+    </nav>
+
+    <!-- ---- Pins ---- -->
+    <section class="tab" id="tab_pins">
+      <div class="card">
+        <div class="scroll">
+          <table class="pins">
+            <thead>
+              <tr>
+                <th>Pin</th>
+                <th>Function</th>
+                <th>Value</th>
+                <th class="settings">Settings</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="pin_rows"></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="card graph" id="g_card" style="display:none">
+        <div class="actions">
+          <label class="inline">Time base
+            <select id="g_span" style="width:auto" onchange="graphSetSpan(Number(this.value))"></select>
+          </label>
+          <button class="btn btn-sm" id="g_live" onclick="graphToggleLive()">Pause</button>
+          <label class="inline">History
+            <select id="g_history" style="width:auto" onchange="graph.history_us = Number(this.value)">
+              <option value="60000000">1 min</option>
+              <option value="600000000" selected>10 min</option>
+              <option value="1800000000">30 min</option>
+            </select>
+          </label>
+          <button class="btn btn-secondary btn-sm" onclick="graphClear()">Clear</button>
+          <button class="btn btn-secondary btn-sm" onclick="graphExport()">Export CSV</button>
+        </div>
+        <div class="alert error" id="g_error"></div>
+        <div class="graph-wrap">
+          <canvas id="g_canvas"></canvas>
+          <div class="graph-tip" id="g_tip"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ---- Buses ---- -->
+    <section class="tab" id="tab_i2c">
+      <div class="card" id="i2c_card"></div>
+    </section>
+
+    <section class="tab" id="tab_uart">
+      <div class="card" id="uart_card"></div>
+    </section>
+
+    <!-- ---- Protocol traffic (debug builds only) ---- -->
+    <section class="tab" id="tab_debug">
+      <div class="card">
+        <div class="card-head">
+          <h2>Protocol traffic</h2>
+          <label class="inline"><input type="checkbox" id="c_hide_reads" checked> Hide reads and streams</label>
+          <button class="btn btn-secondary btn-sm" onclick="clearTraffic()">Clear</button>
+        </div>
+        <div class="traffic" id="traffic"></div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    /* ================= Roles: everything comes from the device's "roles" response ================= */
+
+    /* name -> { label, short, bus, pins, params, value, writable, base, fixed }. base: the
+     * device role a page preset configures, with its fixed params. */
+    var ROLES = {};
+
+    /* Short names are acronyms ("adc", "i2c", "uart"). */
+    function roleText(name) {
+      return name.length <= 4 ? name.toUpperCase() : name.charAt(0).toUpperCase() + name.slice(1);
+    }
+
+    function wordsText(text) {
+      var words = text.replace(/_/g, ' ');
+      return words.charAt(0).toUpperCase() + words.slice(1);
+    }
+
+    /* Param name without its unit suffix: "debounce_ms" with unit "ms" -> "debounce". */
+    function paramBase(param) {
+      var suffix = param.unit ? '_' + param.unit.toLowerCase() : '';
+      return (suffix && param.name.slice(-suffix.length) === suffix) ? param.name.slice(0, -suffix.length) : param.name;
+    }
+
+    function paramLabel(param, role) {
+      var notes = (param.unit ? [param.unit] : []).concat(param.shared ? ['all ' + roleText(role) + ' pins'] : []);
+      return wordsText(paramBase(param)) + (notes.length ? ' (' + notes.join(', ') + ')' : '');
+    }
+
+    /* A pin taking a role starts from the values its shared params already have. */
+    function sharedParams(role) {
+      var params = {};
+      var other = model.pins.filter(function (x) { return x.role === role; })[0];
+      roleOf(role).params.forEach(function (param) {
+        if (param.shared && other) { params[param.name] = other.params[param.name]; }
+      });
+      return params;
+    }
+
+    function paramText(param, value) {
+      var base = paramBase(param).replace(/_/g, ' ');
+      var text = '';
+      if (param.type === 'bool') {
+        text = (value ? '' : 'no ') + base;
+      } else {
+        text = base + ' ' + value + (param.unit ? ' ' + param.unit : '');
+      }
+      return text;
+    }
+
+    function setRoles(list) {
+      ROLES = {};
+      list.forEach(function (r) {
+        ROLES[r.name] = {
+          label: roleText(r.name),
+          short: roleText(r.name),
+          bus: r.pins.length > 1 ? r.pins.map(function (f) { return f.split('_').pop().toUpperCase(); }) : null,
+          pins: r.pins,
+          params: r.params,
+          value: r.value,
+          writable: r.writable,
+          base: r.name,
+          fixed: {}
+        };
+        /* Listed right after pwm in the Function select. */
+        if (r.name === 'pwm') {
+          ROLES.frequency = Object.assign({}, ROLES.pwm, {
+            label: 'Frequency',
+            short: 'Frequency',
+            params: ROLES.pwm.params.filter(function (param) { return param.name !== 'duty'; }),
+            fixed: { duty: FREQUENCY_DUTY }
+          });
+        }
+      });
+    }
+
+    /* A frequency output is pwm at 50 %; a pwm pin configured at that duty shows as one. */
+    var FREQUENCY_DUTY = 500;
+
+    function pinRole(p) {
+      return (p.role === 'pwm' && p.params.duty === FREQUENCY_DUTY) ? 'frequency' : p.role;
+    }
+
+    /* A role the page doesn't know (roles failed) still renders. */
+    function roleOf(name) {
+      return ROLES[name] || { label: name, short: name, bus: null, pins: [], params: [], value: null, writable: false, base: name, fixed: {} };
+    }
+
+
+    /* ===================================================================================
+     * PAGE
+     * =================================================================================== */
+
+    function pinCan(pin, role, index) {
+      return pin.caps.indexOf(roleOf(role).pins[index]) >= 0;
+    }
+
+    var model = null;
+    var selected = null;
+    var editor = { role: '', dirty: false };
+    var pending = {};
+    var nextId = 1;
+    var busKeys = { i2c: null, uart: null };
+    var msgTimer = null;
+
+    var ICON_GRAPH = 'M3 3v18h18M7 15l4-5 4 3 5-7';
+
+    /* ---- Connection ---- */
+
+    var WS_DELAY_MIN_MS = 1000;
+    var WS_DELAY_MAX_MS = 10000;
+    var REQUEST_TIMEOUT_MS = 8000;
+
+    var ws = null;
+    var wsOpen = false;
+    var wsDelay = WS_DELAY_MIN_MS;
+
+    function wsConnect() {
+      var socket = new WebSocket('ws://' + location.host + '/io/ws');
+      socket.binaryType = 'arraybuffer';
+      ws = socket;
+
+      socket.onopen = function () {
+        if (socket !== ws) { return; }
+        wsOpen = true;
+        panelStatus('Connected', 'ok');
+        onConnected();
+      };
+
+      socket.onmessage = function (e) {
+        var m = null;
+        if (socket !== ws) { return; }
+        if (typeof e.data !== 'string') {
+          graphOnFrames(new Uint8Array(e.data));
+          return;
+        }
+        try {
+          m = JSON.parse(e.data);
+        } catch (err) {
+          return;
+        }
+        wsReceive(m);
+      };
+
+      socket.onclose = function () {
+        if (socket !== ws) { return; }
+        ws = null;
+        wsOpen = false;
+        panelStatus('Reconnecting...', 'busy');
+        failPending('Not connected');
+        setTimeout(wsConnect, wsDelay);
+        wsDelay = Math.min(wsDelay * 2, WS_DELAY_MAX_MS);
+      };
+
+      socket.onerror = function () { socket.close(); };
+    }
+
+    /* The device answers in order, so the roles are known when hello arrives. */
+    function onConnected() {
+      request('roles', {}, function (r) {
+        if (r.ok) { setRoles(r.roles); }
+      });
+      request('hello', {}, function (r) {
+        if (r.ok) { onHello(r); }
+      });
+    }
+
+    function wsSend(msg) {
+      traffic('->', msg);
+      ws.send(JSON.stringify(msg));
+    }
+
+    function wsReceive(m) {
+      traffic(m.update ? '<=' : '<-', m, typeof m.id === 'number' ? pending[m.id] : null);
+      if (m.update) {
+        onUpdate(m.update);
+      } else if (typeof m.id === 'number') {
+        settle(m.id, m);
+      }
+    }
+
+    function request(cmd, args, done) {
+      var msg = Object.assign({ id: nextId++, cmd: cmd }, args || {});
+      var entry = { cmd: cmd, done: done, timer: null };
+      pending[msg.id] = entry;
+      if (!wsOpen) {
+        settle(msg.id, { id: msg.id, ok: false, error: 'ESP_ERR_INVALID_STATE', reason: 'Not connected' });
+        return;
+      }
+      entry.timer = setTimeout(function () {
+        settle(msg.id, { id: msg.id, ok: false, error: 'ESP_ERR_TIMEOUT', reason: 'No response from device' });
+      }, REQUEST_TIMEOUT_MS);
+      wsSend(msg);
+    }
+
+    function failPending(reason) {
+      Object.keys(pending).forEach(function (id) {
+        settle(Number(id), { id: Number(id), ok: false, error: 'ESP_ERR_INVALID_STATE', reason: reason });
+      });
+    }
+
+    function errorText(m) {
+      return m.reason || m.error;
+    }
+
+    /* Errors that have a better place than the alert: I2C errors go to the transfer history
+     * or the scan line, stream errors to the graph. ADC polls just keep the last value. */
+    function settle(id, m) {
+      var p = pending[id];
+      if (!p) { return; }
+      delete pending[id];
+      clearTimeout(p.timer);
+      if (p.cmd === 'stream' || p.cmd === 'unstream') {
+        graphSetError(m.ok ? '' : errorText(m));
+      } else if (!m.ok && p.cmd !== 'transfer' && p.cmd !== 'discover' && p.cmd !== 'read') {
+        showMsg(errorText(m));
+      }
+      if (p.done) { p.done(m); }
+    }
+
+    /* ---- Model: one entry per pool pin; a bus is stored on both of its pins ---- */
+
+    function pinFree(pin) {
+      pin.role = '';
+      pin.label = '';
+      pin.index = 0;
+      pin.partner = null;
+      pin.params = {};
+      pin.value = undefined;
+    }
+
+    function applyInstance(instance) {
+      instance.gpio.forEach(function (gpio, i) {
+        var pin = modelPin(gpio);
+        if (!pin) { return; }
+        pinFree(pin);
+        if (instance.role === 'none') { return; }
+        pin.role = instance.role;
+        pin.label = instance.label || '';
+        pin.index = i;
+        pin.partner = instance.gpio.length > 1 ? instance.gpio[1 - i] : null;
+        pin.params = instance.params || {};
+        pin.value = instance.value;
+      });
+    }
+
+    function onHello(r) {
+      wsDelay = WS_DELAY_MIN_MS;
+      model = {
+        debug: r.debug,
+        unsaved: r.unsaved,
+        pins: r.pins.map(function (p) { return { gpio: p.gpio, caps: p.caps }; }),
+        streams: r.streams || []
+      };
+      model.pins.forEach(pinFree);
+      r.instances.forEach(applyInstance);
+      graphApplyStreams(r.streams || []);
+      renderAll();
+    }
+
+    /* Updates carry the current state of the pins they list: replace, never merge. */
+    function onUpdate(u) {
+      if (!model) { return; }
+      if (u.config) { u.config.forEach(applyInstance); }
+      /* Before the configuration renders: a reconfigured pin's stream has stopped, and
+       * graphSyncSignals starts it again. */
+      if (u.streams) {
+        model.streams = u.streams;
+        graphApplyStreams(u.streams);
+      }
+      if (u.config) { renderConfig(); }
+      Object.keys(u.values || {}).forEach(function (key) {
+        var pin = modelPin(Number(key));
+        if (!pin || !pin.role) { return; }
+        var changed = pin.value !== u.values[key];
+        pin.value = u.values[key];
+        updateRow(pin.gpio);
+        if (changed && pin.role === 'input') { flashPin(pin.gpio); }
+      });
+      if (u.unsaved !== undefined) {
+        model.unsaved = u.unsaved;
+        renderStatus();
+      }
+    }
+
+    /* ADC values aren't pushed by the device: each ADC pin is read 10 times a second. */
+    var ADC_POLL_MS = 100;
+    var adcPolling = {};
+
+    function adcPoll() {
+      if (!model || !wsOpen) { return; }
+      model.pins.forEach(function (p) {
+        if (p.role !== 'adc' || adcPolling[p.gpio]) { return; }
+        adcPolling[p.gpio] = true;
+        request('read', { gpio: p.gpio }, function (r) {
+          delete adcPolling[p.gpio];
+          if (r.ok && p.role === 'adc') {
+            p.value = r.value;
+            updateRow(p.gpio);
+          }
+        });
+      });
+    }
+
+    setInterval(adcPoll, ADC_POLL_MS);
+
+    function modelPin(gpio) {
+      if (!model) { return null; }
+      return model.pins.filter(function (p) { return p.gpio === gpio; })[0] || null;
+    }
+
+    function pinLabel(p) {
+      return p.label ? p.label : 'GPIO ' + p.gpio;
+    }
+
+    /* ---- Rendering ---- */
+
+    function renderAll() {
+      renderStatus();
+      renderConfig();
+    }
+
+    function renderConfig() {
+      renderTabs();
+      renderPins();
+      if (!editor.dirty) { renderEditor(); }
+      renderI2c();
+      renderUart();
+      graphSyncSignals();
+      uartSyncStreams();
+    }
+
+    function renderStatus() {
+      document.getElementById('tab_link_debug').style.display = model.debug ? '' : 'none';
+      if (!model.debug && activeTab === 'debug') { showTab('pins'); }
+      document.getElementById('b_unsaved').style.display = model.unsaved ? '' : 'none';
+      document.getElementById('btn_save').disabled = !model.unsaved;
+      document.getElementById('btn_revert').disabled = !model.unsaved;
+    }
+
+    function showMsg(text) {
+      var el = document.getElementById('a_msg');
+      el.className = 'alert error';
+      el.textContent = text;
+      clearTimeout(msgTimer);
+      msgTimer = setTimeout(function () { el.textContent = ''; }, 8000);
+    }
+
+    /* ---- Sub-tabs ---- */
+
+    var activeTab = 'pins';
+
+    function showTab(name) {
+      if (!document.getElementById('tab_' + name) || (name === 'debug' && model && !model.debug)) { name = 'pins'; }
+      activeTab = name;
+      Array.prototype.forEach.call(document.querySelectorAll('.subtabs a'), function (a) {
+        a.classList.toggle('active', a.getAttribute('data-tab') === name);
+      });
+      Array.prototype.forEach.call(document.querySelectorAll('.tab'), function (s) {
+        s.classList.toggle('active', s.id === 'tab_' + name);
+      });
+      if (name === 'pins' && !graph.raf) { graph.raf = requestAnimationFrame(graphFrame); }
+      if (model) { renderTabs(); }
+    }
+
+    /* Bus tabs stay clickable when no bus exists; they just look inactive. */
+    function renderTabs() {
+      Array.prototype.forEach.call(document.querySelectorAll('.subtabs a'), function (a) {
+        var tab = a.getAttribute('data-tab');
+        if (tab === 'i2c' || tab === 'uart') { a.classList.toggle('off', !busPins(tab).length); }
+      });
+    }
+
+    window.addEventListener('hashchange', function () { showTab(location.hash.slice(1)); });
+
+    function fmtHz(f) {
+      f = Number(f);
+      if (f >= 1e6) { return (f / 1e6) + ' MHz'; }
+      if (f >= 1e3) { return (f / 1e3) + ' kHz'; }
+      return f + ' Hz';
+    }
+
+    function led(on) {
+      return '<span class="led' + (on ? ' on' : '') + '"></span>';
+    }
+
+    /* ---- Pin table ---- */
+
+    function functionText(p) {
+      var role = roleOf(pinRole(p));
+      var text = '';
+      if (!p.role) {
+        text = 'free';
+      } else if (role.bus) {
+        text = role.short + ' ' + role.bus[p.index];
+      } else {
+        text = role.label;
+      }
+      return text;
+    }
+
+    function functionShortText(p) {
+      return (p.role && !roleOf(p.role).bus) ? roleOf(pinRole(p)).short : functionText(p);
+    }
+
+    function settingsText(p) {
+      var role = roleOf(pinRole(p));
+      var parts = [];
+      if (!p.role) { return ''; }
+      role.params.forEach(function (param) {
+        if (p.params[param.name] !== undefined) { parts.push(paramText(param, p.params[param.name])); }
+      });
+      if (role.bus) { parts.push(role.bus[1 - p.index] + ' on GPIO ' + p.partner); }
+      return parts.join(' · ');
+    }
+
+    /* The Value cell is the only live control for a pin (no duplicate in the editor). A 0/1
+     * writable value is a level button that writes the level wanted, never a toggle. */
+    function valueHtml(p) {
+      var role = roleOf(p.role);
+      var range = role.value;
+      var g = p.gpio;
+      var h = '';
+      if (!p.role) { return ''; }
+      if (role.bus) {
+        h = (p.index === 0) ? '<a class="btn btn-secondary btn-xs" href="#' + p.role + '"' + ctl('') + '>Open</a>' : '';
+      } else if (p.value === undefined || !range) {
+        h = '';
+      } else if (pinRole(p) === 'frequency') {
+        h = runHtml(g, p.value !== 0, FREQUENCY_DUTY) + '<small>' + (p.value ? fmtHz(p.params.frequency_hz) : 'idle') + '</small>';
+      } else if (p.role === 'pwm') {
+        h = '<input type="range" class="mini" id="duty_' + g + '" min="0" max="1000" value="' + p.value + '"'
+          + ctl('') + ' oninput="dutyInput(' + g + ', this.value)" onchange="this.blur()">'
+          + '<b id="dt_' + g + '">' + dutyText(p.value) + '</b>';
+      } else if (p.role === 'pulse') {
+        h = runHtml(g, p.value !== 0, 1) + '<small>' + (p.value ? 'running' : 'idle') + '</small>';
+      } else if (role.writable && range.min === 0 && range.max === 1) {
+        h = '<button class="level-btn"' + ctl('writePin(' + g + ', ' + (p.value ? 0 : 1) + ')') + '>'
+          + led(p.value) + (p.value ? 'HIGH' : 'LOW') + '</button>';
+      } else if (range.unit === 'level') {
+        h = led(p.value) + '<b>' + (p.value ? 'HIGH' : 'LOW') + '</b>';
+      } else {
+        h = '<b>' + esc(p.value + ' ' + range.unit) + '</b>';
+      }
+      return h ? '<span class="pin-ctl">' + h + '</span>' : '';
+    }
+
+    /* Start/Stop writes the value wanted (start value or 0), never a toggle. */
+    function runHtml(gpio, running, startValue) {
+      return '<button class="btn btn-xs ' + (running ? 'on' : 'btn-secondary') + '"'
+        + ctl('writePin(' + gpio + ', ' + (running ? 0 : startValue) + ')') + '>' + (running ? 'Stop' : 'Start') + '</button>';
+    }
+
+    /* Duty arrives in permille. */
+    function dutyText(permille) {
+      return (permille / 10) + ' %';
+    }
+
+    /* Inline controls must not also select the row. */
+    function ctl(call) {
+      return ' onclick="event.stopPropagation();' + (call ? ' ' + call : '') + '"';
+    }
+
+    function graphButtonHtml(p) {
+      if (!p.role || !GRAPH_KIND[p.role]) { return ''; }
+      return '<button class="icon-btn' + (graph.signals[p.gpio] ? ' on' : '') + '" aria-label="Show in graph"'
+        + ' onclick="event.stopPropagation(); graphToggle(' + p.gpio + ')">' + panelIcon(ICON_GRAPH) + '</button>';
+    }
+
+    function rowClass(p) {
+      return (p.role ? '' : 'free')
+        + (p.gpio === selected ? ' selected' : '')
+        + (p.role === 'i2c' ? ' bus-i2c' : '') + (p.role === 'uart' ? ' bus-uart' : '');
+    }
+
+    function renderPins() {
+      if (!model) { return; }
+      var open = document.getElementById('editor_row');
+      document.getElementById('pin_rows').innerHTML = model.pins.map(function (p) {
+        var pin = p.label
+          ? '<b>' + esc(p.label) + '</b><small>GPIO ' + p.gpio + '</small>'
+          : '<b>GPIO ' + p.gpio + '</b>';
+        return '<tr class="' + rowClass(p) + '" id="pin_' + p.gpio + '" tabindex="0" onclick="selectPin(' + p.gpio + ')"'
+          + ' onkeydown="if (event.key === \'Enter\') { selectPin(' + p.gpio + '); }">'
+          + '<td class="gpio">' + pin + '</td>'
+          + '<td class="fn"><span class="fn-long">' + esc(functionText(p)) + '</span>'
+          + '<span class="fn-short">' + esc(functionShortText(p)) + '</span>'
+          + '<small class="fn-settings">' + esc(settingsText(p)) + '</small></td>'
+          + '<td class="value" id="v_' + p.gpio + '">' + valueHtml(p) + '</td>'
+          + '<td class="settings muted">' + esc(settingsText(p)) + '</td>'
+          + '<td id="gb_' + p.gpio + '">' + graphButtonHtml(p) + '</td></tr>';
+      }).join('');
+      if (open && modelPin(selected)) {
+        var pinRow = document.getElementById('pin_' + selected);
+        pinRow.parentNode.insertBefore(open, pinRow.nextSibling);
+      }
+    }
+
+    function updateRow(gpio) {
+      var p = modelPin(gpio);
+      var row = document.getElementById('pin_' + gpio);
+      if (!p || !row) { return; }
+      row.className = rowClass(p);
+      /* A pushed duty must not yank the slider out from under the pointer. */
+      var slider = document.getElementById('duty_' + gpio);
+      if (slider && document.activeElement === slider) {
+        document.getElementById('dt_' + gpio).textContent = dutyText(p.value);
+      } else {
+        setHtml(document.getElementById('v_' + gpio), valueHtml(p));
+      }
+      setHtml(document.getElementById('gb_' + gpio), graphButtonHtml(p));
+    }
+
+    /* Rows refresh 10 times a second for ADC values: a control rebuilt between press and
+     * release loses the click, so cells are only replaced when they change. */
+    function setHtml(element, html) {
+      if (element.dataset.html !== html) {
+        element.dataset.html = html;
+        element.innerHTML = html;
+      }
+    }
+
+    function flashPin(gpio) {
+      var el = document.getElementById('pin_' + gpio);
+      if (!el) { return; }
+      el.classList.remove('flash');
+      void el.offsetWidth;
+      el.classList.add('flash');
+    }
+
+    /* ---- Live controls (in the table) ---- */
+
+    function writePin(gpio, value) {
+      request('write', { gpio: gpio, value: value });
+    }
+
+    var dutyTimers = {};
+
+    /* Throttled so dragging sends at most ~10 writes per second. */
+    function dutyInput(gpio, value) {
+      document.getElementById('dt_' + gpio).textContent = dutyText(Number(value));
+      if (dutyTimers[gpio]) { return; }
+      dutyTimers[gpio] = setTimeout(function () {
+        dutyTimers[gpio] = null;
+        var slider = document.getElementById('duty_' + gpio);
+        if (slider) { writePin(gpio, Number(slider.value)); }
+      }, 100);
+    }
+
+    /* ---- Pin editor (configuration only) ---- */
+
+    function selectPin(gpio) {
+      selected = (selected === gpio) ? null : gpio;
+      editor = { role: '', dirty: false };
+      model.pins.forEach(function (p) {
+        var row = document.getElementById('pin_' + p.gpio);
+        if (row) { row.className = rowClass(p); }
+      });
+      renderEditor();
+      if (selected !== null) {
+        document.getElementById('editor_row').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }
+    }
+
+    function closeEditor() {
+      if (selected !== null) { selectPin(selected); }
+    }
+
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && activeTab === 'pins') { closeEditor(); }
+    });
+
+    function roleOptions(p, current) {
+      var h = '<option value="">— unused —</option>';
+      Object.keys(ROLES).forEach(function (k) {
+        var allowed = ROLES[k].bus ? (pinCan(p, k, 0) || pinCan(p, k, 1)) : pinCan(p, k, 0);
+        if (!allowed) { return; }
+        h += '<option value="' + k + '"' + (k === current ? ' selected' : '') + '>' + esc(ROLES[k].label) + '</option>';
+      });
+      return h;
+    }
+
+    function fieldHtml(param, value, role) {
+      var v = String((value === undefined) ? param.default : value);
+      var options = param.type === 'enum' ? param.options : param.type === 'bool' ? ['false', 'true'] : null;
+      var input = '';
+      if (options) {
+        input = '<select id="f_' + param.name + '" onchange="touch()">' + options.map(function (o) {
+          return '<option value="' + esc(o) + '"' + (v === o ? ' selected' : '') + '>' + esc(o) + '</option>';
+        }).join('') + '</select>';
+      } else {
+        input = '<input type="number" id="f_' + param.name + '" value="' + esc(v) + '" min="' + param.min
+          + '" max="' + param.max + '" oninput="touch()">';
+      }
+      return '<label class="field">' + esc(paramLabel(param, role)) + input + '</label>';
+    }
+
+    function fieldValue(param) {
+      var v = document.getElementById('f_' + param.name).value;
+      var value = v;
+      if (param.type === 'bool') {
+        value = (v === 'true');
+      } else if (param.type === 'u32') {
+        value = Number(v);
+      }
+      return value;
+    }
+
+    function partnerOptions(p, role, partnerIndex) {
+      return model.pins.filter(function (x) {
+        return x.gpio !== p.gpio && pinCan(x, role, partnerIndex)
+          && (!x.role || (x.role === role && x.gpio === p.partner));
+      }).map(function (x) {
+        return '<option value="' + x.gpio + '"' + (x.gpio === p.partner ? ' selected' : '') + '>GPIO ' + x.gpio + '</option>';
+      }).join('') || '<option value="">no free pin</option>';
+    }
+
+    /* The editor is an extra table row right under the selected pin, on every screen size. */
+    function editorRow() {
+      var row = document.getElementById('editor_row');
+      var pinRow = document.getElementById('pin_' + selected);
+      if (!row) {
+        row = document.createElement('tr');
+        row.id = 'editor_row';
+        row.className = 'editor-row';
+        row.innerHTML = '<td colspan="5"><div class="pin-editor" id="editor"></div></td>';
+      }
+      if (pinRow && pinRow.nextSibling !== row) { pinRow.parentNode.insertBefore(row, pinRow.nextSibling); }
+      return row;
+    }
+
+    function renderEditor() {
+      var p = modelPin(selected);
+      var old = document.getElementById('editor_row');
+      if (!p) {
+        if (old) { old.parentNode.removeChild(old); }
+        return;
+      }
+      editorRow();
+      var card = document.getElementById('editor');
+      var role = editor.dirty ? editor.role : (pinRole(p) || '');
+      editor.role = role;
+      var labelInput = document.getElementById('ed_label');
+      var label = (editor.dirty && labelInput) ? labelInput.value : p.label;
+
+      /* No title: the pin row right above already shows label and GPIO. */
+      var h = '<div class="form">'
+        + '<label class="field">Label<input type="text" id="ed_label" maxlength="15" value="'
+        + esc(label || '') + '" oninput="touch()"></label>'
+        + '<label class="field">Function<select id="ed_role" onchange="roleChanged()">' + roleOptions(p, role) + '</select></label>';
+
+      if (role && roleOf(role).bus) {
+        var bus = roleOf(role).bus;
+        var index = (p.role === role) ? p.index : (pinCan(p, role, 0) ? 0 : 1);
+        h += '<label class="field">This pin is<select id="ed_as" onchange="asChanged()">'
+          + bus.map(function (n, i) {
+            return pinCan(p, role, i) ? '<option value="' + i + '"' + (i === index ? ' selected' : '') + '>' + n + '</option>' : '';
+          }).join('') + '</select></label>'
+          + '<label class="field">Partner pin<select id="ed_partner" onchange="touch()">' + partnerOptions(p, role, 1 - index) + '</select></label>';
+      }
+
+      var params = (pinRole(p) === role) ? p.params : (role ? sharedParams(role) : {});
+      if (role) {
+        roleOf(role).params.forEach(function (param) { h += fieldHtml(param, params[param.name], role); });
+      }
+      h += '</div>';
+
+      h += '<div class="actions editor-actions"><div class="actions">'
+        + '<button class="btn" id="ed_apply" onclick="applyEditor()"' + (editor.dirty ? '' : ' disabled') + '>Apply</button>'
+        + (p.role ? '<button class="btn btn-danger" onclick="releasePin()">Release'
+          + (p.partner ? ' GPIO ' + p.gpio + ' + ' + p.partner : '') + '</button>' : '')
+        + '</div><div class="actions">'
+        + '<button class="btn btn-secondary" onclick="closeEditor()">Close</button>'
+        + '</div></div>';
+
+      card.innerHTML = h;
+    }
+
+    function touch() {
+      editor.dirty = true;
+      document.getElementById('ed_apply').disabled = false;
+    }
+
+    function roleChanged() {
+      editor.role = document.getElementById('ed_role').value;
+      editor.dirty = true;
+      renderEditor();
+    }
+
+    function asChanged() {
+      var p = modelPin(selected);
+      var index = Number(document.getElementById('ed_as').value);
+      document.getElementById('ed_partner').innerHTML = partnerOptions(p, editor.role, 1 - index);
+      touch();
+    }
+
+    /* Sends every param: the device resets the ones left out to their defaults. */
+    function applyEditor() {
+      var p = modelPin(selected);
+      var role = editor.role;
+      if (!role) {
+        if (p.role) { releasePin(); }
+        return;
+      }
+      var gpio = [p.gpio];
+      if (roleOf(role).bus) {
+        var partner = Number(document.getElementById('ed_partner').value);
+        if (!partner) {
+          showMsg('Select a partner pin');
+          return;
+        }
+        gpio = Number(document.getElementById('ed_as').value) === 0 ? [p.gpio, partner] : [partner, p.gpio];
+      }
+      var params = Object.assign({}, roleOf(role).fixed);
+      roleOf(role).params.forEach(function (param) { params[param.name] = fieldValue(param); });
+      var label = document.getElementById('ed_label').value.trim();
+      request('config', { gpio: gpio, role: roleOf(role).base, label: label, params: params }, function (r) {
+        if (r.ok) { editor.dirty = false; }
+      });
+    }
+
+    function releasePin() {
+      request('release', { gpio: selected }, function (r) {
+        if (r.ok) { editor = { role: '', dirty: false }; }
+      });
+    }
+
+    /* ---- Save / revert ---- */
+
+    function saveConfig() {
+      request('save', {});
+    }
+
+    /* The reverted state arrives as an update. */
+    function revertConfig() {
+      request('revert', {}, function (r) {
+        if (r.ok) { editor = { role: '', dirty: false }; }
+      });
+    }
+
+    /* ---- Graph ---- */
+
+    var GRAPH_SPANS = [
+      [1e6, '1 s'], [5e6, '5 s'], [10e6, '10 s'], [30e6, '30 s'],
+      [60e6, '1 min'], [300e6, '5 min'], [600e6, '10 min']
+    ];
+    /* pulse is the pin level: a pulse narrower than a pixel still draws its two edges. */
+    var GRAPH_KIND = { input: 'digital', output: 'digital', adc: 'analog', pwm: 'step', pulse: 'digital' };
+    var GRAPH_LANE = { digital: 46, marker: 42, step: 86, analog: 124 };
+    var GRAPH_TICKS_MS = [100, 200, 500, 1000, 2000, 5000, 10000, 15000, 30000, 60000, 120000, 300000];
+    var GRAPH_ADC_RANGE = { '0': 950, '2.5': 1250, '6': 1750, '12': 3100 };
+    /* Label column left of the plot; narrower on phones so the plot keeps most of the width. */
+    var GRAPH_GUTTER_WIDE = 104;
+    var GRAPH_GUTTER_NARROW = 84;
+    var GRAPH_AXIS = 26;
+    /* Frames arrive every 50-100 ms; drawing slightly behind hides the batch boundary. */
+    var GRAPH_LATENCY_US = 150000;
+    /* Device time going back by more than this means the device rebooted. */
+    var GRAPH_REBOOT_US = 2e6;
+    var GRAPH_STORE = 'smart_io.graph';
+
+    /* signals: the pins the device streams, the same for every client. wanted: the pins
+     * this browser graphs, remembered across reloads and streamed again when the device
+     * dropped them (last client gone, pin reconfigured). */
+    var graph = {
+      signals: {}, wanted: graphLoad(), span_us: 10e6, live: true, end_us: 0, history_us: 600e6,
+      clock: null, frame_end: null, wall_offset_ms: null, hover_x: null, drag: null, raf: null,
+      hatch: null, gutter: GRAPH_GUTTER_WIDE
+    };
+
+    function graphDeviceNow() {
+      return graph.clock ? graph.clock.device_us + (performance.now() * 1000 - graph.clock.local_us) : 0;
+    }
+
+    function graphWallMs(t_us) {
+      return t_us / 1000 + graph.wall_offset_ms;
+    }
+
+    function graphEnd() {
+      return graph.live ? graphDeviceNow() - GRAPH_LATENCY_US : graph.end_us;
+    }
+
+    function graphList() {
+      if (!model) { return []; }
+      return model.pins.filter(function (p) { return graph.signals[p.gpio]; })
+        .map(function (p) { return graph.signals[p.gpio]; });
+    }
+
+    function lowerBound(array, value) {
+      var low = 0;
+      var high = array.length;
+      while (low < high) {
+        var mid = (low + high) >> 1;
+        if (array[mid] < value) { low = mid + 1; } else { high = mid; }
+      }
+      return low;
+    }
+
+    /* ---- Selection ---- */
+
+    function graphLoad() {
+      var saved = [];
+      try {
+        saved = JSON.parse(localStorage.getItem(GRAPH_STORE) || '[]');
+      } catch (e) {
+        saved = [];
+      }
+      return Array.isArray(saved) ? saved.filter(function (w) { return typeof w.gpio === 'number'; }) : [];
+    }
+
+    function graphSave() {
+      try {
+        localStorage.setItem(GRAPH_STORE, JSON.stringify(graph.wanted));
+      } catch (e) {
+        /* Storage unavailable (private mode): selection just isn't remembered. */
+      }
+    }
+
+    function graphNewSignal(p) {
+      return { gpio: p.gpio, role: p.role, kind: GRAPH_KIND[p.role], t: [], v: [] };
+    }
+
+    /* The signal exists before the device confirms, so the first frame isn't dropped. */
+    function graphStream(p) {
+      if (!graph.signals[p.gpio]) { graph.signals[p.gpio] = graphNewSignal(p); }
+      request('stream', { gpio: p.gpio }, function (r) {
+        if (!r.ok && graph.signals[p.gpio] && !graph.signals[p.gpio].t.length) {
+          delete graph.signals[p.gpio];
+          graphRenderSignals();
+          updateRow(p.gpio);
+        }
+      });
+    }
+
+    /* The device's stream list, from hello and updates. */
+    function graphApplyStreams(gpios) {
+      var streamed = {};
+      gpios.forEach(function (gpio) {
+        var p = modelPin(gpio);
+        if (!p || !GRAPH_KIND[p.role]) { return; }
+        streamed[gpio] = true;
+        if (!graph.signals[gpio] || graph.signals[gpio].role !== p.role) {
+          graph.signals[gpio] = graphNewSignal(p);
+          updateRow(gpio);
+        }
+      });
+      Object.keys(graph.signals).forEach(function (key) {
+        if (!streamed[key]) {
+          delete graph.signals[key];
+          updateRow(Number(key));
+        }
+      });
+      graphRenderSignals();
+    }
+
+    /* On hello and every configuration change: wanted pins whose role changed are
+     * forgotten, the rest are streamed again if the device isn't streaming them. Not on
+     * stream list changes, so two pages never fight over a pin. */
+    function graphSyncSignals() {
+      graph.wanted = graph.wanted.filter(function (w) {
+        var p = modelPin(w.gpio);
+        return p && p.role === w.role && GRAPH_KIND[p.role];
+      });
+      graphSave();
+      graph.wanted.forEach(function (w) {
+        if (!graph.signals[w.gpio]) { graphStream(modelPin(w.gpio)); }
+      });
+      graphRenderSignals();
+    }
+
+    /* The graph card sits under the pin table and shows only while a lane is on. */
+    function graphRenderSignals() {
+      document.getElementById('g_card').style.display = graphList().length ? '' : 'none';
+    }
+
+    /* Streams belong to the device: turning a signal off stops it for every page. */
+    function graphToggle(gpio) {
+      var p = modelPin(gpio);
+      graph.wanted = graph.wanted.filter(function (w) { return w.gpio !== gpio; });
+      if (graph.signals[gpio]) {
+        request('unstream', { gpio: gpio });
+      } else if (p && GRAPH_KIND[p.role]) {
+        graph.wanted.push({ gpio: gpio, role: p.role });
+        graphStream(p);
+      }
+      graphSave();
+      graphRenderSignals();
+      updateRow(gpio);
+    }
+
+    /* Stream values are raw: PWM duty arrives in permille, null marks a gap. */
+    function graphValue(sig, raw) {
+      return (sig.role === 'pwm') ? raw / 10 : raw;
+    }
+
+    function graphSetError(text) {
+      document.getElementById('g_error').textContent = text;
+    }
+
+    /* ---- Stream frames (WS_PROTO.md §8) ---- */
+
+    var FRAME_KIND = { DIGITAL: 0, SERIES: 1, VALUE: 2, BYTES: 3, GAP: 4 };
+
+    function frameReader(bytes) {
+      var reader = { offset: 0 };
+      reader.done = function () { return reader.offset >= bytes.length; };
+      reader.byte = function () {
+        if (reader.offset >= bytes.length) { throw new Error('truncated frame'); }
+        return bytes[reader.offset++];
+      };
+      /* Arithmetic, not bit operations: values may use all 32 bits. */
+      reader.varint = function () {
+        var value = 0;
+        var scale = 1;
+        var current = 0;
+        do {
+          current = reader.byte();
+          value += (current & 0x7f) * scale;
+          scale *= 128;
+        } while (current & 0x80);
+        return value;
+      };
+      reader.zigzag = function () {
+        var value = reader.varint();
+        return (value % 2) ? -(value + 1) / 2 : value / 2;
+      };
+      reader.u64 = function () {
+        var value = 0;
+        for (var i = 0; i < 8; i++) { value += reader.byte() * Math.pow(2, 8 * i); }
+        return value;
+      };
+      reader.bytes = function (count) {
+        if (reader.offset + count > bytes.length) { throw new Error('truncated frame'); }
+        reader.offset += count;
+        return bytes.subarray(reader.offset - count, reader.offset);
+      };
+      return reader;
+    }
+
+    function graphSignalAt(index) {
+      var p = model ? model.pins[index] : null;
+      return p ? graph.signals[p.gpio] || null : null;
+    }
+
+    /* VALUE samples may be a little older than the frame; keep each trace ordered. */
+    function graphPush(sig, t, v) {
+      var last = sig.t.length - 1;
+      sig.t.push((last >= 0 && t < sig.t[last]) ? sig.t[last] : t);
+      sig.v.push(v);
+    }
+
+    function graphGap(sig, t) {
+      if (sig.v.length && sig.v[sig.v.length - 1] !== null) { graphPush(sig, t, null); }
+    }
+
+    function graphLevel(levels, index) {
+      return (levels >>> index) & 1;
+    }
+
+    function graphOnDigital(reader, start) {
+      var pins = reader.varint();
+      var levels = reader.varint();
+      var count = reader.varint();
+      var time = start;
+      var sigs = [];
+      for (var index = 0; index < 32; index++) {
+        var sig = graphLevel(pins, index) ? graphSignalAt(index) : null;
+        if (sig) {
+          sigs.push({ index: index, sig: sig });
+          var level = graphLevel(levels, index);
+          if (!sig.v.length || sig.v[sig.v.length - 1] !== level) { graphPush(sig, start, level); }
+        }
+      }
+      for (var i = 0; i < count; i++) {
+        time += reader.varint();
+        var toggled = reader.varint();
+        levels = (levels ^ toggled) >>> 0;
+        sigs.forEach(function (entry) {
+          if (graphLevel(toggled, entry.index)) { graphPush(entry.sig, time, graphLevel(levels, entry.index)); }
+        });
+      }
+    }
+
+    function graphOnBlock(reader, start) {
+      var id = reader.byte();
+      var kind = id >> 5;
+      var sig = graphSignalAt(id & 0x1f);
+      var time = start;
+      var value = 0;
+      var count = 0;
+      var i = 0;
+      if (kind === FRAME_KIND.DIGITAL) {
+        graphOnDigital(reader, start);
+      } else if (kind === FRAME_KIND.SERIES) {
+        time += reader.zigzag();
+        var period = reader.varint();
+        if (sig) { sig.period_us = period; }
+        count = reader.varint();
+        for (i = 0; i < count; i++) {
+          value = (value + reader.zigzag()) | 0;
+          if (sig) { graphPush(sig, time + i * period, value); }
+        }
+      } else if (kind === FRAME_KIND.VALUE) {
+        count = reader.varint();
+        for (i = 0; i < count; i++) {
+          time += reader.zigzag();
+          value = (value + reader.zigzag()) | 0;
+          /* The device restates values every 100 ms; only changes are kept. */
+          if (sig && (!sig.v.length || sig.v[sig.v.length - 1] !== graphValue(sig, value))) {
+            graphPush(sig, time, graphValue(sig, value));
+          }
+        }
+      } else if (kind === FRAME_KIND.BYTES) {
+        reader.varint();
+        count = reader.varint();
+        uartOnBytes(id & 0x1f, reader.bytes(count));
+      } else if (kind === FRAME_KIND.GAP) {
+        if (sig) { graphGap(sig, start); }
+        uartOnGap(id & 0x1f);
+      } else {
+        throw new Error('unknown block ' + kind);
+      }
+    }
+
+    function graphOnFrame(reader) {
+      var start = reader.u64();
+      var end = start + reader.varint();
+      var count = reader.byte();
+      var rebooted = graph.frame_end !== null && start < graph.frame_end - GRAPH_REBOOT_US;
+      if (rebooted) {
+        graphList().forEach(function (sig) {
+          sig.t = [];
+          sig.v = [];
+        });
+      }
+      if (graph.wall_offset_ms === null || rebooted) {
+        graph.wall_offset_ms = Date.now() - end / 1000;
+      } else if (start !== graph.frame_end) {
+        /* Frames lost, or streaming paused: nothing is known in between. */
+        graphList().forEach(function (sig) { graphGap(sig, graph.frame_end); });
+      }
+      graph.frame_end = end;
+      graph.clock = { device_us: end, local_us: performance.now() * 1000 };
+      for (var i = 0; i < count; i++) { graphOnBlock(reader, start); }
+    }
+
+    function graphOnFrames(bytes) {
+      var reader = frameReader(bytes);
+      var frames = 0;
+      try {
+        while (!reader.done()) {
+          graphOnFrame(reader);
+          frames++;
+        }
+      } catch (e) {
+        graphSetError('Unreadable stream data: ' + e.message);
+      }
+      traffic('<=', { frames: frames, bytes: bytes.length });
+      var cutoff = graph.frame_end - graph.history_us;
+      graphList().forEach(function (sig) {
+        var keep = Math.max(0, lowerBound(sig.t, cutoff) - 1);
+        if (keep > 0) {
+          sig.t.splice(0, keep);
+          sig.v.splice(0, keep);
+        }
+      });
+    }
+
+    function graphSetSpan(span) {
+      graph.span_us = span;
+      document.getElementById('g_span').value = String(span);
+    }
+
+    function graphToggleLive() {
+      if (graph.live) {
+        graph.end_us = graphEnd();
+        graph.live = false;
+      } else {
+        graph.live = true;
+      }
+      document.getElementById('g_live').textContent = graph.live ? 'Pause' : 'Live';
+    }
+
+    function graphClear() {
+      graphList().forEach(function (sig) {
+        sig.t = [];
+        sig.v = [];
+      });
+    }
+
+    function graphFormatTime(wall_ms, withMs) {
+      var d = new Date(wall_ms);
+      var text = ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2) + ':' + ('0' + d.getSeconds()).slice(-2);
+      return withMs ? text + '.' + ('00' + d.getMilliseconds()).slice(-3) : text;
+    }
+
+    function graphExport() {
+      var rows = [];
+      graphList().forEach(function (sig) {
+        var name = (modelPin(sig.gpio) || {}).label || '';
+        sig.t.forEach(function (t, i) { rows.push([t, sig.gpio, name, sig.role, sig.v[i]]); });
+      });
+      rows.sort(function (a, b) { return a[0] - b[0]; });
+      var csv = 'time_iso,device_time_s,gpio,name,function,value\n' + rows.map(function (r) {
+        return new Date(graphWallMs(r[0])).toISOString() + ',' + (r[0] / 1e6).toFixed(6) + ','
+          + r[1] + ',' + r[2] + ',' + r[3] + ',' + (r[4] === null ? '' : r[4]);
+      }).join('\n');
+      var link = document.createElement('a');
+      link.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+      link.download = 'smart_io_' + new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19) + '.csv';
+      link.click();
+      setTimeout(function () { URL.revokeObjectURL(link.href); }, 1000);
+    }
+
+    function graphScale(sig) {
+      var p = modelPin(sig.gpio);
+      var scale = { min: 0, max: 1, top: 'H', bottom: 'L' };
+      if (sig.kind === 'analog') {
+        scale.max = GRAPH_ADC_RANGE[p.params.atten] || 3100;
+        scale.top = (scale.max / 1000).toFixed(2) + ' V';
+        scale.bottom = '0 V';
+      } else if (sig.role === 'pwm') {
+        scale.max = 100;
+        scale.top = '100 %';
+        scale.bottom = '0 %';
+      } else if (sig.kind === 'marker') {
+        scale.top = '';
+        scale.bottom = '';
+      } else {
+        /* digital input / output: defaults */
+      }
+      return scale;
+    }
+
+    function graphValueText(sig, v) {
+      var text = '';
+      if (v === undefined) {
+        text = '—';
+      } else if (v === null) {
+        text = 'no data';
+      } else if (sig.kind === 'analog') {
+        text = v + ' mV';
+      } else if (sig.role === 'pwm') {
+        text = v + ' %';
+      } else if (sig.kind === 'marker') {
+        text = 'pulse ' + v + ' µs';
+      } else {
+        text = v ? 'HIGH' : 'LOW';
+      }
+      return text;
+    }
+
+    function graphHatch(ctx, color) {
+      if (!graph.hatch || graph.hatch.color !== color) {
+        var tile = document.createElement('canvas');
+        tile.width = 8;
+        tile.height = 8;
+        var t = tile.getContext('2d');
+        t.strokeStyle = color;
+        t.lineWidth = 1;
+        t.beginPath();
+        t.moveTo(0, 8);
+        t.lineTo(8, 0);
+        t.stroke();
+        graph.hatch = { color: color, pattern: ctx.createPattern(tile, 'repeat') };
+      }
+      return graph.hatch.pattern;
+    }
+
+    /* Step trace for digital and setpoint lanes. Streams are complete up to the end of
+     * the last frame, so the last value is held until then. */
+    function graphDrawSteps(ctx, sig, view, lane, color) {
+      var t = sig.t;
+      var v = sig.v;
+      var start = Math.max(0, lowerBound(t, view.start) - 1);
+      var limit = Math.min(view.end, graph.clock.device_us);
+      var gaps = [];
+      var highs = [];
+      var pen = false;
+      ctx.beginPath();
+      for (var i = start; i < t.length && t[i] <= view.end; i++) {
+        var next = (i + 1 < t.length) ? t[i + 1] : limit;
+        if (next < view.start) { continue; }
+        var xa = view.x(Math.max(t[i], view.start));
+        var xb = view.x(Math.min(next, view.end));
+        if (v[i] === null) {
+          gaps.push([xa, xb]);
+          pen = false;
+          continue;
+        }
+        var y = lane.y(v[i]);
+        if (pen) { ctx.lineTo(xa, y); } else { ctx.moveTo(xa, y); }
+        ctx.lineTo(xb, y);
+        pen = true;
+        if (sig.kind === 'digital' && v[i]) { highs.push([xa, xb]); }
+      }
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      ctx.globalAlpha = 0.14;
+      ctx.fillStyle = color;
+      highs.forEach(function (h) { ctx.fillRect(h[0], lane.top, h[1] - h[0], lane.bottom - lane.top); });
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = view.hatch;
+      gaps.forEach(function (g) { ctx.fillRect(g[0], lane.top, Math.max(1, g[1] - g[0]), lane.bottom - lane.top); });
+    }
+
+    /* Line trace for ADC; zoomed out it draws min/max per pixel column instead of every
+     * sample, so 10 min at 500 Hz stays cheap. */
+    function graphDrawAnalog(ctx, sig, view, lane, color) {
+      var t = sig.t;
+      var v = sig.v;
+      var start = Math.max(0, lowerBound(t, view.start) - 1);
+      var stop = Math.min(t.length, lowerBound(t, view.end) + 1);
+      var bucketed = (stop - start) > view.width * 2;
+      var column = null;
+      var low = 0;
+      var high = 0;
+      var pen = false;
+      var gapColumns = [];
+      ctx.beginPath();
+
+      function flushColumn() {
+        if (column === null) { return; }
+        if (pen) { ctx.lineTo(column, lane.y(high)); } else { ctx.moveTo(column, lane.y(high)); }
+        ctx.lineTo(column, lane.y(low));
+        pen = true;
+      }
+
+      for (var i = start; i < stop; i++) {
+        var x = view.x(t[i]);
+        if (v[i] === null) {
+          flushColumn();
+          column = null;
+          pen = false;
+          gapColumns.push(x);
+          continue;
+        }
+        if (!bucketed) {
+          if (pen) { ctx.lineTo(x, lane.y(v[i])); } else { ctx.moveTo(x, lane.y(v[i])); }
+          pen = true;
+          continue;
+        }
+        var col = Math.floor(x);
+        if (col !== column) {
+          flushColumn();
+          column = col;
+          low = v[i];
+          high = v[i];
+        } else {
+          low = Math.min(low, v[i]);
+          high = Math.max(high, v[i]);
+        }
+      }
+      flushColumn();
+      ctx.strokeStyle = color;
+      ctx.lineWidth = bucketed ? 1.5 : 2;
+      ctx.lineJoin = 'round';
+      ctx.stroke();
+      ctx.fillStyle = view.hatch;
+      var gapWidth = 3;
+      gapColumns.forEach(function (x) { ctx.fillRect(x - gapWidth / 2, lane.top, gapWidth, lane.bottom - lane.top); });
+    }
+
+    function graphDrawMarkers(ctx, sig, view, lane, color, surface) {
+      var start = lowerBound(sig.t, view.start);
+      ctx.fillStyle = color;
+      for (var i = start; i < sig.t.length && sig.t[i] <= view.end; i++) {
+        var x = view.x(sig.t[i]);
+        ctx.fillRect(x - 1, lane.top + 8, 2, lane.bottom - lane.top - 8);
+        ctx.beginPath();
+        ctx.arc(x, lane.top + 6, 4, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = surface;
+        ctx.stroke();
+      }
+    }
+
+    function graphValueAt(sig, t, view) {
+      var i = lowerBound(sig.t, t + 1) - 1;
+      var value = null;
+      if (sig.kind === 'marker') {
+        var tolerance = 5 / view.width * view.span;
+        var near = lowerBound(sig.t, t - tolerance);
+        value = (near < sig.t.length && sig.t[near] <= t + tolerance) ? sig.v[near] : undefined;
+      } else if (sig.kind === 'analog') {
+        if (i >= 0 && i + 1 < sig.t.length && (sig.t[i + 1] - t) < (t - sig.t[i])) { i++; }
+        value = i >= 0 ? sig.v[i] : null;
+      } else {
+        value = (i >= 0 && t <= graph.clock.device_us) ? sig.v[i] : null;
+      }
+      return value;
+    }
+
+    function graphDraw() {
+      var canvas = document.getElementById('g_canvas');
+      var tip = document.getElementById('g_tip');
+      var list = graphList();
+      var width = canvas.clientWidth;
+      var height = GRAPH_AXIS + list.reduce(function (h, sig) { return h + GRAPH_LANE[sig.kind]; }, 0);
+      if (!list.length) { height = 90; }
+      canvas.style.height = height + 'px';
+      var dpr = window.devicePixelRatio || 1;
+      if (canvas.width !== Math.round(width * dpr) || canvas.height !== Math.round(height * dpr)) {
+        canvas.width = Math.round(width * dpr);
+        canvas.height = Math.round(height * dpr);
+      }
+      var ctx = canvas.getContext('2d');
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, width, height);
+
+      var css = getComputedStyle(canvas);
+      var token = function (name) { return css.getPropertyValue(name).trim(); };
+      var ink = { text: token('--text'), dim: token('--text-dim'), faint: token('--text-faint'), grid: token('--border'), surface: token('--surface') };
+      ctx.font = '12px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif';
+      ctx.textBaseline = 'middle';
+
+      if (!list.length || !graph.clock) {
+        ctx.fillStyle = ink.faint;
+        ctx.textAlign = 'center';
+        ctx.fillText(list.length ? 'Waiting for data…' : 'No signals selected', width / 2, 45);
+        tip.style.display = 'none';
+        return;
+      }
+
+      var gutter = (width < 480) ? GRAPH_GUTTER_NARROW : GRAPH_GUTTER_WIDE;
+      graph.gutter = gutter;
+      var plotWidth = width - gutter - 8;
+      var end = graphEnd();
+      var view = {
+        start: end - graph.span_us, end: end, span: graph.span_us, width: plotWidth,
+        hatch: graphHatch(ctx, ink.faint),
+        x: function (t) { return gutter + (t - (end - graph.span_us)) / graph.span_us * plotWidth; }
+      };
+      var lanesBottom = height - GRAPH_AXIS;
+
+      /* Time grid on round wall-clock times. */
+      var tickMs = GRAPH_TICKS_MS.filter(function (step) { return graph.span_us / 1000 / step <= 8; })[0] || 600000;
+      var firstMs = Math.ceil(graphWallMs(view.start) / tickMs) * tickMs;
+      ctx.lineWidth = 1;
+      ctx.textAlign = 'center';
+      for (var wall = firstMs; wall <= graphWallMs(view.end); wall += tickMs) {
+        var tx = Math.round(view.x((wall - graph.wall_offset_ms) * 1000)) + 0.5;
+        ctx.strokeStyle = ink.grid;
+        ctx.beginPath();
+        ctx.moveTo(tx, 0);
+        ctx.lineTo(tx, lanesBottom);
+        ctx.stroke();
+        ctx.fillStyle = ink.dim;
+        ctx.fillText(graphFormatTime(wall, tickMs < 1000).replace(/^00:/, ''), tx, lanesBottom + GRAPH_AXIS / 2);
+      }
+
+      var y0 = 0;
+      list.forEach(function (sig) {
+        var h = GRAPH_LANE[sig.kind];
+        var scale = graphScale(sig);
+        var lane = {
+          top: y0 + 8, bottom: y0 + h - 8,
+          y: function (value) {
+            var f = (value - scale.min) / (scale.max - scale.min);
+            return y0 + h - 8 - Math.max(0, Math.min(1, f)) * (h - 16);
+          }
+        };
+        var color = token('--viz-' + sig.kind);
+
+        ctx.strokeStyle = ink.grid;
+        ctx.beginPath();
+        ctx.moveTo(0, y0 + h - 0.5);
+        ctx.lineTo(width, y0 + h - 0.5);
+        ctx.stroke();
+
+        ctx.textAlign = 'left';
+        ctx.fillStyle = color;
+        ctx.fillRect(0, y0 + h / 2 - 13, 3, 26);
+        ctx.fillStyle = ink.text;
+        /* Short lanes put the scale labels on the same lines as the name; keep clear of them. */
+        ctx.font = '11px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif';
+        var scaleWidth = Math.max(ctx.measureText(scale.top).width, ctx.measureText(scale.bottom).width);
+        var labelWidth = gutter - 16 - (h < 60 ? scaleWidth + 6 : 0);
+        var lanePin = modelPin(sig.gpio);
+        ctx.font = '600 12px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif';
+        ctx.fillText(graphFitText(ctx, lanePin.label || 'GPIO ' + sig.gpio, labelWidth), 10, y0 + h / 2 - 7);
+        ctx.font = '11px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif';
+        ctx.fillStyle = ink.dim;
+        ctx.fillText(graphFitText(ctx, (lanePin.label ? 'GPIO ' + sig.gpio + ' · ' : '') + roleOf(sig.role).short
+          + (sig.period_us ? ' · ' + Math.round(1e6 / sig.period_us) + ' Hz' : ''), labelWidth), 10, y0 + h / 2 + 8);
+        ctx.textAlign = 'right';
+        ctx.fillStyle = ink.faint;
+        ctx.fillText(scale.top, gutter - 6, lane.top + 4);
+        ctx.fillText(scale.bottom, gutter - 6, lane.bottom - 4);
+        ctx.font = '12px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif';
+
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(gutter, y0, plotWidth, h);
+        ctx.clip();
+        if (sig.kind === 'analog') {
+          graphDrawAnalog(ctx, sig, view, lane, color);
+        } else if (sig.kind === 'marker') {
+          graphDrawMarkers(ctx, sig, view, lane, color, ink.surface);
+        } else {
+          graphDrawSteps(ctx, sig, view, lane, color);
+        }
+        ctx.restore();
+        y0 += h;
+      });
+
+      /* Crosshair and tooltip. */
+      if (graph.hover_x !== null && graph.hover_x >= gutter && !(graph.drag && graph.drag.moved)) {
+        var hx = Math.round(graph.hover_x) + 0.5;
+        var ht = view.start + (graph.hover_x - gutter) / plotWidth * view.span;
+        ctx.strokeStyle = ink.dim;
+        ctx.beginPath();
+        ctx.moveTo(hx, 0);
+        ctx.lineTo(hx, lanesBottom);
+        ctx.stroke();
+        tip.innerHTML = '<div class="muted">' + graphFormatTime(graphWallMs(ht), true) + '</div>'
+          + list.map(function (sig) {
+            return '<div><span class="swatch" style="background:var(--viz-' + sig.kind + ')"></span>'
+              + esc(pinLabel(modelPin(sig.gpio))) + '<b>' + esc(graphValueText(sig, graphValueAt(sig, ht, view))) + '</b></div>';
+          }).join('');
+        tip.style.display = 'block';
+        var left = graph.hover_x + 14;
+        if (left + tip.offsetWidth > width) { left = graph.hover_x - 14 - tip.offsetWidth; }
+        left = Math.max(0, left);
+        tip.style.left = left + 'px';
+        tip.style.top = '8px';
+      } else {
+        tip.style.display = 'none';
+      }
+    }
+
+    function graphFitText(ctx, text, maxWidth) {
+      var fitted = text;
+      while (fitted.length > 1 && ctx.measureText(fitted).width > maxWidth) {
+        fitted = fitted.slice(0, -2) + '…';
+      }
+      return fitted;
+    }
+
+    function graphFrame() {
+      if (activeTab !== 'pins') {
+        graph.raf = null;
+        return;
+      }
+      graphDraw();
+      graph.raf = requestAnimationFrame(graphFrame);
+    }
+
+    (function graphInit() {
+      var canvas = document.getElementById('g_canvas');
+      document.getElementById('g_span').innerHTML = GRAPH_SPANS.map(function (s) {
+        return '<option value="' + s[0] + '"' + (s[0] === graph.span_us ? ' selected' : '') + '>' + s[1] + '</option>';
+      }).join('');
+
+      function plotWidth() { return canvas.clientWidth - graph.gutter - 8; }
+
+      /* Pointer events cover mouse and touch: drag pans (and pauses), a tap on touch
+       * places the crosshair, mouse hover moves it. Vertical swipes still scroll the page
+       * (touch-action: pan-y). */
+      canvas.addEventListener('pointerdown', function (e) {
+        graph.drag = { x: e.clientX, end: graphEnd(), moved: false };
+        canvas.setPointerCapture(e.pointerId);
+      });
+      canvas.addEventListener('pointermove', function (e) {
+        /* Mouse, or a pen hovering above the screen (S Pen air hover). */
+        if (e.pointerType === 'mouse' || (e.pointerType === 'pen' && e.buttons === 0)) { graph.hover_x = e.offsetX; }
+        if (!graph.drag) { return; }
+        var dx = e.clientX - graph.drag.x;
+        if (!graph.drag.moved && Math.abs(dx) > 4) {
+          graph.drag.moved = true;
+          if (graph.live) { graphToggleLive(); }
+          canvas.classList.add('dragging');
+        }
+        if (graph.drag.moved) {
+          graph.end_us = Math.min(graphDeviceNow(), graph.drag.end - dx / plotWidth() * graph.span_us);
+        }
+      });
+      canvas.addEventListener('pointerup', function (e) {
+        if (graph.drag && !graph.drag.moved && e.pointerType !== 'mouse') { graph.hover_x = e.offsetX; }
+        graph.drag = null;
+        canvas.classList.remove('dragging');
+      });
+      canvas.addEventListener('pointercancel', function () {
+        graph.drag = null;
+        canvas.classList.remove('dragging');
+      });
+      canvas.addEventListener('pointerleave', function (e) {
+        if (e.pointerType !== 'touch') { graph.hover_x = null; }
+      });
+      /* Wheel steps through the time bases and keeps the time under the pointer fixed. */
+      canvas.addEventListener('wheel', function (e) {
+        e.preventDefault();
+        var index = GRAPH_SPANS.map(function (s) { return s[0]; }).indexOf(graph.span_us);
+        var next = Math.max(0, Math.min(GRAPH_SPANS.length - 1, index + (e.deltaY > 0 ? 1 : -1)));
+        if (next === index) { return; }
+        var fraction = Math.max(0, Math.min(1, (e.offsetX - graph.gutter) / plotWidth()));
+        var end = graphEnd();
+        var pointer = end - graph.span_us + fraction * graph.span_us;
+        graphSetSpan(GRAPH_SPANS[next][0]);
+        if (!graph.live) {
+          graph.end_us = Math.min(graphDeviceNow(), pointer + (1 - fraction) * graph.span_us);
+        }
+      }, { passive: false });
+    })();
+
+    /* ---- Buses ---- */
+
+    function busPins(role) {
+      if (!model) { return []; }
+      return model.pins.filter(function (p) { return p.role === role && p.index === 0; });
+    }
+
+    function busEmptyHtml(title) {
+      return '<div class="card-head"><h2>' + title + '</h2></div><p class="muted">No ' + title + ' configured</p>'
+        + '<div class="actions" style="margin-top:12px"><a class="btn btn-secondary btn-sm" href="#pins">Configure on Pins</a></div>';
+    }
+
+    /* ---- I2C ---- */
+
+    var i2cHistory = [];
+
+    function renderI2c() {
+      var p = busPins('i2c')[0];
+      var key = p ? p.gpio + '/' + p.partner + '/' + p.params.frequency_hz + '/' + p.label : '';
+      if (key === busKeys.i2c) { return; }
+      busKeys.i2c = key;
+      if (!p) {
+        document.getElementById('i2c_card').innerHTML = busEmptyHtml('I2C');
+        return;
+      }
+      document.getElementById('i2c_card').innerHTML = '<div class="card-head"><h2>' + esc(p.label || 'I2C')
+        + '</h2><p>SDA ' + p.gpio + ' · SCL ' + p.partner + ' · ' + fmtHz(p.params.frequency_hz) + '</p></div>'
+        + '<div class="actions"><button class="btn btn-secondary btn-sm" onclick="i2cScan()">Scan</button>'
+        + '<span class="muted" id="i2c_scan_text" style="font-size:.85em"></span></div>'
+        + '<div class="addr-grid" id="i2c_grid"></div>'
+        + '<div class="form" style="margin-top:16px">'
+        + '<label class="field">Address<input type="text" id="i2c_addr" value="0x76"></label>'
+        + '<label class="field">Write (hex)<input type="text" id="i2c_write" value="d0"></label>'
+        + '<label class="field">Read bytes<input type="number" id="i2c_read" value="1" min="0" max="64"></label>'
+        + '<button class="btn" onclick="i2cTransfer()">Transfer</button></div>'
+        + '<div class="scroll" id="i2c_history_wrap" style="margin-top:14px; display:none"><table class="history"><thead><tr><th>Time</th><th>Address</th>'
+        + '<th>Write</th><th>Result</th></tr></thead><tbody id="i2c_history"></tbody></table></div>';
+      renderAddrGrid([]);
+      renderI2cHistory();
+    }
+
+    function renderAddrGrid(found) {
+      var h = '';
+      for (var a = 0; a < 128; a++) {
+        var reserved = (a < 0x08 || a > 0x77);
+        var hit = found.indexOf(a) >= 0;
+        h += '<span class="' + (hit ? 'found' : reserved ? 'reserved' : '') + '"'
+          + (hit ? ' onclick="i2cPick(' + a + ')"' : '') + '>'
+          + (reserved ? '' : ('0' + a.toString(16)).slice(-2)) + '</span>';
+      }
+      document.getElementById('i2c_grid').innerHTML = h;
+    }
+
+    function i2cScan() {
+      document.getElementById('i2c_scan_text').textContent = 'scanning…';
+      request('discover', { gpio: busPins('i2c')[0].gpio }, function (r) {
+        if (!r.ok) {
+          document.getElementById('i2c_scan_text').textContent = errorText(r);
+          return;
+        }
+        renderAddrGrid(r.found);
+        document.getElementById('i2c_scan_text').textContent = r.found.length + ' device(s): '
+          + r.found.map(function (a) { return '0x' + a.toString(16); }).join(', ');
+      });
+    }
+
+    function i2cPick(a) {
+      document.getElementById('i2c_addr').value = '0x' + a.toString(16);
+    }
+
+    function i2cTransfer() {
+      var address = parseInt(document.getElementById('i2c_addr').value, 16);
+      var write = document.getElementById('i2c_write').value.replace(/\s+/g, '');
+      var transfer = { addr: address, tx: write, rx: Number(document.getElementById('i2c_read').value) };
+      request('transfer', { gpio: busPins('i2c')[0].gpio, transfers: [transfer] }, function (r) {
+        i2cHistory.unshift({
+          t_ms: Date.now(), address: address, write: write, ok: r.ok,
+          result: r.ok ? (r.results[0].rx || '—') : errorText(r)
+        });
+        i2cHistory = i2cHistory.slice(0, 10);
+        renderI2cHistory();
+      });
+    }
+
+    function renderI2cHistory() {
+      document.getElementById('i2c_history_wrap').style.display = i2cHistory.length ? '' : 'none';
+      document.getElementById('i2c_history').innerHTML = i2cHistory.map(function (x) {
+        return '<tr><td class="time">' + graphFormatTime(x.t_ms, true) + '</td><td class="mono">0x'
+          + x.address.toString(16) + '</td><td class="mono">' + esc(x.write || '—') + '</td><td class="mono'
+          + (x.ok ? '' : ' muted') + '">' + (x.ok ? '' : '<span class="badge danger">error</span> ') + esc(x.result) + '</td></tr>';
+      }).join('');
+    }
+
+    /* ---- UART ---- */
+
+    var uartSelected = null;
+    var uartHex = false;
+    var uartLines = {};
+
+    function renderUart() {
+      var buses = busPins('uart');
+      var key = buses.map(function (p) { return p.gpio + '/' + p.partner + '/' + p.params.baud + uartFormat(p) + '/' + p.label; }).join();
+      if (key === busKeys.uart) { return; }
+      busKeys.uart = key;
+      if (!buses.length) {
+        document.getElementById('uart_card').innerHTML = busEmptyHtml('UART');
+        return;
+      }
+      if (!buses.some(function (p) { return p.gpio === uartSelected; })) { uartSelected = buses[0].gpio; }
+      var p = modelPin(uartSelected);
+      var head = buses.length > 1
+        ? '<select style="width:auto" onchange="uartSelect(Number(this.value))">' + buses.map(function (b) {
+          return '<option value="' + b.gpio + '"' + (b.gpio === uartSelected ? ' selected' : '') + '>' + esc(pinLabel(b)) + '</option>';
+        }).join('') + '</select>'
+        : '<h2>' + esc(p.label || 'UART') + '</h2>';
+      document.getElementById('uart_card').innerHTML = '<div class="card-head">' + head
+        + '<p>TX ' + p.gpio + ' · RX ' + p.partner + ' · ' + p.params.baud + ' ' + uartFormat(p) + '</p>'
+        + '<label class="inline"><input type="checkbox" id="uart_hex"' + (uartHex ? ' checked' : '')
+        + ' onchange="uartHex = this.checked; uartRender()"> Hex</label>'
+        + '<button class="btn btn-secondary btn-sm" onclick="uartLines[uartSelected] = []; uartRender()">Clear</button></div>'
+        + '<div class="terminal" id="term"></div>'
+        + '<div class="actions" style="margin-top:10px">'
+        + '<input type="text" id="term_input" style="flex:1" onkeydown="if (event.key === \'Enter\') { uartSend(); }">'
+        + '<select id="term_eol" style="width:auto"><option value="\r\n">CR LF</option><option value="\n">LF</option>'
+        + '<option value="">none</option></select>'
+        + '<button class="btn" onclick="uartSend()">Send</button></div>';
+      uartRender();
+    }
+
+    /* 8N1 style. */
+    function uartFormat(p) {
+      return p.params.data_bits + ({ none: 'N', even: 'E', odd: 'O' }[p.params.parity] || '?') + p.params.stop_bits;
+    }
+
+    /* The UART tab shows everything received, so every UART streams while configured.
+     * Never unstreamed by the page: other pages may be reading it too. */
+    function uartSyncStreams() {
+      busPins('uart').forEach(function (p) {
+        if (model.streams.indexOf(p.gpio) < 0) { request('stream', { gpio: p.gpio }); }
+      });
+    }
+
+    /* BYTES and GAP blocks address the bus by its first pin (TX). */
+    function uartAt(index) {
+      var p = model ? model.pins[index] : null;
+      return (p && p.role === 'uart' && p.index === 0) ? p : null;
+    }
+
+    function uartOnBytes(index, data) {
+      var p = uartAt(index);
+      if (!p || !data.length) { return; }
+      uartAppend(p.gpio, Array.prototype.map.call(data, function (b) { return ('0' + b.toString(16)).slice(-2); }).join(' '), 'rx');
+    }
+
+    function uartOnGap(index) {
+      var p = uartAt(index);
+      if (p) { uartAppend(p.gpio, '', 'lost'); }
+    }
+
+    function uartSelect(gpio) {
+      uartSelected = gpio;
+      busKeys.uart = null;
+      renderUart();
+    }
+
+    function textToHex(t) {
+      return Array.prototype.map.call(t, function (c) { return ('0' + (c.charCodeAt(0) & 0xFF).toString(16)).slice(-2); }).join(' ');
+    }
+
+    function hexToText(h) {
+      return (h || '').split(' ').filter(Boolean).map(function (b) { return String.fromCharCode(parseInt(b, 16)); }).join('');
+    }
+
+    function uartSend() {
+      var input = document.getElementById('term_input');
+      var data = uartHex
+        ? input.value.replace(/[^0-9a-f]/gi, '').replace(/(..)(?!$)/g, '$1 ').trim()
+        : textToHex(input.value + document.getElementById('term_eol').value);
+      if (!data) { return; }
+      var gpio = uartSelected;
+      request('transfer', { gpio: gpio, transfers: [{ addr: 0, tx: data.replace(/ /g, '') }] }, function (r) {
+        if (r.ok) {
+          uartAppend(gpio, data, 'tx');
+        } else {
+          showMsg(errorText(r));
+        }
+      });
+      input.value = '';
+    }
+
+    function uartAppend(gpio, hex, kind) {
+      (uartLines[gpio] = uartLines[gpio] || []).push({ kind: kind, hex: hex });
+      if (uartLines[gpio].length > 500) { uartLines[gpio].shift(); }
+      if (gpio === uartSelected) { uartRender(); }
+    }
+
+    function uartRender() {
+      var term = document.getElementById('term');
+      if (!term) { return; }
+      term.innerHTML = (uartLines[uartSelected] || []).map(function (line) {
+        var text = line.kind === 'lost' ? '\n[data lost]\n'
+          : uartHex ? (line.kind === 'tx' ? '› ' : '‹ ') + line.hex + '\n' : hexToText(line.hex);
+        return '<span class="' + line.kind + '">' + esc(text) + '</span>';
+      }).join('');
+      term.scrollTop = term.scrollHeight;
+    }
+
+    /* ---- Protocol traffic ---- */
+
+    function traffic(dir, msg, pendingEntry) {
+      if (model && !model.debug) { return; }
+      var periodic = (msg.cmd === 'read') || (pendingEntry && pendingEntry.cmd === 'read')
+        || (msg.frames !== undefined);
+      if (periodic && document.getElementById('c_hide_reads').checked) { return; }
+      var el = document.getElementById('traffic');
+      var line = document.createElement('div');
+      line.className = dir === '->' ? 'out' : dir === '<=' ? 'evt' : (msg.ok === false ? 'err' : 'in');
+      line.textContent = dir + ' ' + JSON.stringify(msg);
+      el.appendChild(line);
+      while (el.children.length > 200) { el.removeChild(el.firstChild); }
+      el.scrollTop = el.scrollHeight;
+    }
+
+    function clearTraffic() {
+      document.getElementById('traffic').innerHTML = '';
+    }
+
+    showTab(location.hash.slice(1) || 'pins');
+    wsConnect();
+  </script>
+</body>
+
+</html>

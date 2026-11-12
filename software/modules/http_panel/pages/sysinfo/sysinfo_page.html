@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ESP32S3 — System</title>
+  <link rel="stylesheet" href="/panel.css">
+  <style>
+    th.sort {
+      cursor: pointer;
+      user-select: none;
+    }
+
+    th.sort:hover {
+      color: var(--text);
+    }
+
+    th.active {
+      color: var(--accent);
+    }
+
+    td.warn {
+      color: var(--warn);
+      font-weight: 600;
+    }
+  </style>
+</head>
+
+<body>
+  <header id="panel-header"></header>
+  <script src="/panel.js"></script>
+
+  <main class="panel-main">
+    <div class="card">
+      <div class="card-head">
+        <h2>System</h2>
+      </div>
+      <table class="kv" id="t_info"></table>
+    </div>
+
+    <div class="grid-2">
+      <div class="card">
+        <div class="card-head">
+          <h2>Flash</h2>
+        </div>
+        <table class="kv" id="t_flash"></table>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <h2>PSRAM</h2>
+        </div>
+        <table class="kv" id="t_psram"></table>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <h2>Cores</h2>
+      </div>
+      <div class="scroll">
+        <table id="t_cores"></table>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <h2>Memory</h2>
+      </div>
+      <div class="scroll">
+        <table id="t_heaps"></table>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <h2>Tasks</h2>
+      </div>
+      <div class="scroll">
+        <table id="t_tasks"></table>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    var STACK_LOW = 512;
+
+    var columns = [
+      { key: 'name', label: 'Task' },
+      { key: 'state', label: 'State' },
+      { key: 'cpu', label: 'CPU', num: true },
+      { key: 'prio', label: 'Prio', num: true },
+      { key: 'core', label: 'Core', num: true },
+      { key: 'stack_free', label: 'Stack free / total', num: true },
+      { key: 'stack_psram', label: 'Stack in' }
+    ];
+
+    var sortKey = 'cpu';
+    var sortDesc = true;
+    var last = null;
+
+    function bytes(n) {
+      if (n >= 1048576) { return (n / 1048576).toFixed(2) + ' MB'; }
+      if (n >= 1024) { return (n / 1024).toFixed(1) + ' KB'; }
+      return n + ' B';
+    }
+
+    function kb(n) {
+      return (n / 1024).toFixed(1);
+    }
+
+    function bar(percent) {
+      var p = Math.max(0, Math.min(100, percent));
+      return '<span class="meter"><span' + (p > 80 ? ' class="hot"' : '') +
+        ' style="width:' + p + '%"></span></span>';
+    }
+
+    function coreName(core) {
+      return core < 0 ? 'any' : String(core);
+    }
+
+    function renderCores(d) {
+      var tasks = d.tasks || [];
+      var h = '<thead><tr><th>Core</th><th class="num">Load</th><th class="num">Pinned tasks</th>' +
+        '<th>Busiest task</th></tr></thead><tbody>';
+
+      (d.cpu || []).forEach(function (load, core) {
+        var pinned = tasks.filter(function (t) { return t.core === core; });
+        var busiest = null;
+
+        pinned.forEach(function (t) {
+          if (!/^IDLE/.test(t.name) && (!busiest || t.cpu > busiest.cpu)) { busiest = t; }
+        });
+
+        h += '<tr><td>' + core + '</td><td class="num">' +
+          (load < 0 ? 'measuring…' : bar(load) + load + ' %') + '</td><td class="num">' +
+          (d.tasks ? pinned.length : '—') + '</td><td>' +
+          (busiest ? esc(busiest.name) + ' (' + (busiest.cpu / 10).toFixed(1) + ' %)' : '—') +
+          '</td></tr>';
+      });
+
+      var floating = tasks.filter(function (t) { return t.core < 0; }).length;
+      h += '<tr><td>any</td><td class="num muted">—</td><td class="num">' +
+        (d.tasks ? floating : '—') + '</td><td class="muted">unpinned</td></tr></tbody>';
+
+      document.getElementById('t_cores').innerHTML = h;
+    }
+
+    function renderItems(id, items) {
+      var h = '';
+      (items || []).forEach(function (item) {
+        h += '<tr><td>' + esc(item.label) + '</td><td>' + esc(item.value) + '</td></tr>';
+      });
+      document.getElementById(id).innerHTML = h;
+    }
+
+    function renderHeaps(d) {
+      var h = '<thead><tr><th>Region</th><th class="num">Used</th><th class="num">Free</th>' +
+        '<th class="num">Total</th><th class="num">Min free</th><th class="num">Largest</th>' +
+        '</tr></thead><tbody>';
+
+      (d.heaps || []).forEach(function (r) {
+        if (r.total === 0) {
+          h += '<tr><td>' + esc(r.name) + '</td><td class="num muted" colspan="5">none</td></tr>';
+          return;
+        }
+        var used = Math.round(100 * (r.total - r.free) / r.total);
+        h += '<tr><td>' + esc(r.name) + '</td><td class="num">' +
+          bar(used) + used + ' %</td><td class="num">' + bytes(r.free) + '</td><td class="num">' +
+          bytes(r.total) + '</td><td class="num">' + bytes(r.min_free) + '</td><td class="num">' +
+          bytes(r.largest) + '</td></tr>';
+      });
+
+      document.getElementById('t_heaps').innerHTML = h + '</tbody>';
+    }
+
+    function compare(a, b) {
+      var x = a[sortKey];
+      var y = b[sortKey];
+      var r = (typeof x === 'string') ? x.localeCompare(y) : (x - y);
+      if (r === 0) { r = a.name.localeCompare(b.name); }
+      return sortDesc ? -r : r;
+    }
+
+    function renderTasks(d) {
+      var h = '<thead><tr>';
+
+      columns.forEach(function (c) {
+        h += '<th class="sort' + (c.num ? ' num' : '') + (c.key === sortKey ? ' active' : '') +
+          '" onclick="sortBy(\'' + c.key + '\')">' + c.label +
+          (c.key === sortKey ? (sortDesc ? ' ▼' : ' ▲') : '') + '</th>';
+      });
+      h += '</tr></thead>';
+
+      if (!d.tasks) {
+        document.getElementById('t_tasks').innerHTML = h;
+        return;
+      }
+
+      h += '<tbody>';
+      d.tasks.slice().sort(compare).forEach(function (t) {
+        var prio = t.prio === t.base_prio ? t.prio : t.prio + ' (base ' + t.base_prio + ')';
+        h += '<tr><td>' + esc(t.name) + '</td><td>' + esc(t.state) + '</td><td class="num">' +
+          bar(t.cpu / 10) + (t.cpu / 10).toFixed(1) + ' %</td><td class="num">' + prio +
+          '</td><td class="num">' + coreName(t.core) + '</td><td class="num' +
+          (t.stack_free < STACK_LOW ? ' warn' : '') + '">' + kb(t.stack_free) + ' / ' +
+          (t.stack_size ? kb(t.stack_size) : '?') + ' kB</td><td>' +
+          (t.stack_psram ? 'PSRAM' : 'internal') + '</td></tr>';
+      });
+
+      document.getElementById('t_tasks').innerHTML = h + '</tbody>';
+    }
+
+    function render(d) {
+      renderCores(d);
+      renderItems('t_info', d.info);
+      renderItems('t_flash', d.flash);
+      renderItems('t_psram', d.psram);
+      renderHeaps(d);
+      renderTasks(d);
+    }
+
+    function sortBy(key) {
+      if (key === sortKey) {
+        sortDesc = !sortDesc;
+      } else {
+        sortKey = key;
+        sortDesc = (key !== 'name' && key !== 'state');
+      }
+      if (last) { renderTasks(last); }
+    }
+
+    function poll() {
+      if (document.hidden) {
+        setTimeout(poll, 1000);
+        return;
+      }
+
+      fetch('/sysinfo/data', { cache: 'no-store' })
+        .then(function (r) {
+          if (!r.ok) { throw new Error('HTTP ' + r.status); }
+          return r.json();
+        })
+        .then(function (d) {
+          last = d;
+          render(d);
+          panelStatus('Updated ' + new Date().toLocaleTimeString(), 'ok');
+          setTimeout(poll, d.window_ms || 1000);
+        })
+        .catch(function (e) {
+          panelStatus('Error: ' + e.message + ' — retrying...', 'error');
+          setTimeout(poll, 3000);
+        });
+    }
+
+    poll();
+  </script>
+</body>
+
+</html>

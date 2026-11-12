@@ -1,0 +1,18 @@
+idf_component_register(
+    SRCS
+        "camera.c"
+        "camera_led.c"
+        "camera_settings.c"
+    INCLUDE_DIRS
+        "."
+    REQUIRES
+        data
+    PRIV_REQUIRES
+        esp32-camera
+        board
+        common
+        esp_driver_ledc
+        heap
+        freertos
+        log
+)

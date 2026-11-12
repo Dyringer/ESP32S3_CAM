@@ -1,0 +1,21 @@
+idf_component_register(
+    SRCS
+        "net_diag.c"
+        "net_diag_scan.c"
+        "net_diag_ping.c"
+        "net_diag_iperf.c"
+        "net_diag_shell.c"
+    INCLUDE_DIRS
+        "."
+    REQUIRES
+        esp_netif
+        esp_wifi
+    PRIV_REQUIRES
+        common
+        espressif__iperf
+        freertos
+        log
+        lwip
+        network
+        shell
+)

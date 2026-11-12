@@ -1,0 +1,17 @@
+idf_component_register(
+    SRCS
+        "data_manager.c"
+        "data_manager_storage.c"
+        "data_manager_shell.c"
+        "data_manager_text.c"
+    INCLUDE_DIRS
+        "."
+    REQUIRES
+        common
+        esp_event
+    PRIV_REQUIRES
+        freertos
+        log
+        nvs_flash
+        shell
+)

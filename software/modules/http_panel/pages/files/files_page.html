@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ESP32S3 — Files</title>
+  <link rel="stylesheet" href="/panel.css">
+  <style>
+    #crumbs {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 4px;
+      font-size: .95em;
+      min-width: 0;
+    }
+
+    #crumbs a {
+      color: var(--accent);
+      cursor: pointer;
+      text-decoration: none;
+    }
+
+    #crumbs a:hover { text-decoration: underline; }
+    #crumbs .sep { color: var(--text-faint); }
+    #crumbs b { font-weight: 600; }
+
+    #usage { margin-bottom: 14px; }
+    #usage_text { font-size: .8em; color: var(--text-dim); margin-top: 6px; }
+
+    td.name { overflow-wrap: anywhere; }
+    td.name a { color: var(--text); text-decoration: none; cursor: pointer; }
+    td.name a:hover { color: var(--accent); }
+    td.name.dir a { font-weight: 600; }
+
+    td.controls {
+      white-space: nowrap;
+      text-align: right;
+      width: 1%;
+    }
+
+    td.empty {
+      text-align: center;
+      color: var(--text-dim);
+      padding: 18px 5px;
+    }
+
+    #dropzone {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 10px;
+      border: 2px dashed var(--border);
+      border-radius: var(--radius);
+      padding: 24px 16px;
+      text-align: center;
+      font-size: .9em;
+      color: var(--text-dim);
+      cursor: pointer;
+      transition: border-color .15s, color .15s, background .15s;
+    }
+
+    /* Children would fire dragleave on the zone and make it flicker. */
+    #dropzone > * { pointer-events: none; }
+
+    #dropzone svg {
+      width: 32px;
+      height: 32px;
+      color: var(--text-faint);
+      transition: color .15s;
+    }
+
+    #dropzone:hover,
+    #dropzone.drag {
+      border-color: var(--accent);
+      color: var(--text);
+    }
+
+    #dropzone:hover svg,
+    #dropzone.drag svg { color: var(--accent); }
+
+    #dropzone.drag { background: var(--accent-soft); }
+
+    #file_input { display: none; }
+
+    #bar { margin-top: 14px; width: 100%; }
+
+    #pct {
+      font-size: .85em;
+      margin-top: 6px;
+      font-variant-numeric: tabular-nums;
+    }
+
+    #result { margin-top: 14px; }
+  </style>
+</head>
+
+<body>
+  <header id="panel-header"></header>
+  <script src="/panel.js"></script>
+
+  <main class="panel-main">
+    <div class="card">
+      <div class="card-head">
+        <div id="crumbs"></div>
+        <button class="btn btn-secondary" onclick="refresh()">Refresh</button>
+        <button class="btn" onclick="newFolder()">New folder</button>
+      </div>
+      <div id="usage">
+        <div class="meter"><span id="usage_bar" style="width:0"></span></div>
+        <div id="usage_text"></div>
+      </div>
+      <div class="scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th class="num">Size</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="t_files"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <h2>Upload</h2>
+      </div>
+      <div id="dropzone">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+          stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12" />
+        </svg>
+        <span>Drag &amp; drop files here, or click to choose</span>
+      </div>
+      <input type="file" id="file_input" multiple>
+      <progress id="bar" max="100" value="0" style="display:none"></progress>
+      <div class="muted" id="pct"></div>
+      <div class="alert" id="result"></div>
+    </div>
+  </main>
+
+  <script>
+    var cwd = '/';
+    var entries = [];
+    var uploading = false;
+
+    function encPath(p) {
+      return encodeURIComponent(p).replace(/%2F/g, '/');
+    }
+
+    function joinPath(dir, name) {
+      return (dir === '/' ? '' : dir) + '/' + name;
+    }
+
+    function fmtSize(n) {
+      if (n < 1024) { return n + ' B'; }
+      if (n < 1048576) { return (n / 1024).toFixed(1) + ' KB'; }
+      return (n / 1048576).toFixed(2) + ' MB';
+    }
+
+    function showResult(ok, msg) {
+      var el = document.getElementById('result');
+      el.className = ok ? 'alert ok' : 'alert error';
+      el.textContent = msg;
+    }
+
+    function setBar(pct, label) {
+      var bar = document.getElementById('bar');
+      bar.style.display = '';
+      bar.value = pct;
+      document.getElementById('pct').textContent = label + ' — ' + pct + '%';
+    }
+
+    function hideBar() {
+      document.getElementById('bar').style.display = 'none';
+      document.getElementById('pct').textContent = '';
+    }
+
+    function errorText(status, text) {
+      var body = {};
+      try { body = JSON.parse(text); } catch (e) { }
+      return body.error || ('HTTP ' + status);
+    }
+
+    function api(method, url) {
+      return fetch(url, { method: method }).then(function (r) {
+        return r.text().then(function (text) {
+          if (!r.ok) { throw new Error(errorText(r.status, text)); }
+          return JSON.parse(text);
+        });
+      });
+    }
+
+    function renderCrumbs() {
+      var parts = cwd.split('/').filter(function (s) { return s !== ''; });
+      var h = '';
+      var path = '';
+
+      if (parts.length === 0) {
+        h = '<b>/</b>';
+      } else {
+        h = '<a data-path="/">/</a>';
+        parts.forEach(function (part, i) {
+          path += '/' + part;
+          h += '<span class="sep">›</span>';
+          h += (i === parts.length - 1)
+            ? '<b>' + esc(part) + '</b>'
+            : '<a data-path="' + esc(path) + '">' + esc(part) + '</a>';
+        });
+      }
+
+      document.getElementById('crumbs').innerHTML = h;
+    }
+
+    function renderUsage(total, used) {
+      var pct = total > 0 ? Math.round(100 * used / total) : 0;
+      var bar = document.getElementById('usage_bar');
+
+      bar.style.width = pct + '%';
+      bar.className = pct >= 95 ? 'full' : (pct >= 80 ? 'hot' : '');
+      document.getElementById('usage_text').textContent =
+        fmtSize(used) + ' of ' + fmtSize(total) + ' used (' + pct + '%)';
+    }
+
+    function renderList() {
+      var h = '';
+
+      if (cwd !== '/') {
+        h += '<tr><td class="name dir"><a data-up="1">..</a></td><td></td><td></td></tr>';
+      }
+
+      entries.forEach(function (e, i) {
+        var link = e.dir
+          ? '<a data-open="' + i + '">' + esc(e.name) + '/</a>'
+          : '<a href="/files/download?path=' + encPath(joinPath(cwd, e.name)) + '">'
+          + esc(e.name) + '</a>';
+
+        h += '<tr><td class="name' + (e.dir ? ' dir' : '') + '">' + link + '</td>'
+          + '<td class="num">' + (e.dir ? '' : fmtSize(e.size)) + '</td>'
+          + '<td class="controls">'
+          + (e.dir ? '' : '<a class="btn btn-secondary btn-sm" href="/files/download?path='
+            + encPath(joinPath(cwd, e.name)) + '">Download</a> ')
+          + '<button class="btn btn-danger btn-sm" data-del="' + i + '">Delete</button>'
+          + '</td></tr>';
+      });
+
+      if (entries.length === 0) {
+        h += '<tr><td class="empty" colspan="3">Empty</td></tr>';
+      }
+
+      document.getElementById('t_files').innerHTML = h;
+    }
+
+    function refresh() {
+      panelStatus('Loading...', 'busy');
+
+      return api('GET', '/files/list?path=' + encPath(cwd)).then(function (d) {
+        cwd = d.path;
+        entries = d.entries;
+        renderCrumbs();
+        renderUsage(d.total, d.used);
+        renderList();
+        panelStatus('Ready', 'ok');
+
+        if (d.truncated) {
+          showResult(false, 'Only the first ' + entries.length + ' entries are shown.');
+        }
+      }).catch(function (e) {
+        panelStatus('Error', 'error');
+        showResult(false, 'List failed: ' + e.message);
+      });
+    }
+
+    function goTo(path) {
+      cwd = path;
+      showResult(true, '');
+      refresh();
+    }
+
+    function parentOf(path) {
+      var i = path.lastIndexOf('/');
+      return i <= 0 ? '/' : path.substring(0, i);
+    }
+
+    function newFolder() {
+      var name = prompt('New folder name');
+
+      if (name === null) { return; }
+
+      name = name.trim();
+
+      if (name === '' || name.indexOf('/') >= 0 || name.charAt(0) === '.') {
+        showResult(false, 'Invalid folder name.');
+        return;
+      }
+
+      api('POST', '/files/mkdir?path=' + encPath(joinPath(cwd, name)))
+        .then(function () { showResult(true, 'Folder created.'); })
+        .catch(function (e) { showResult(false, 'Create folder failed: ' + e.message); })
+        .then(refresh);
+    }
+
+    function remove(entry) {
+      var what = entry.dir ? 'folder' : 'file';
+
+      if (!confirm('Delete ' + what + ' "' + entry.name + '"?')) { return; }
+
+      api('POST', '/files/delete?path=' + encPath(joinPath(cwd, entry.name)))
+        .then(function () { showResult(true, 'Deleted ' + entry.name + '.'); })
+        .catch(function (e) { showResult(false, 'Delete failed: ' + e.message); })
+        .then(refresh);
+    }
+
+    function uploadOne(file, label) {
+      return new Promise(function (resolve, reject) {
+        var xhr = new XMLHttpRequest();
+
+        xhr.open('POST', '/files/upload?path=' + encPath(joinPath(cwd, file.name)));
+        xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+
+        xhr.upload.onprogress = function (e) {
+          if (e.lengthComputable) {
+            setBar(Math.round(100 * e.loaded / e.total), label);
+          }
+        };
+
+        xhr.onreadystatechange = function () {
+          if (xhr.readyState !== 4) { return; }
+
+          if (xhr.status === 200) {
+            resolve();
+          } else if (xhr.status === 0) {
+            reject(new Error('network error'));
+          } else {
+            reject(new Error(errorText(xhr.status, xhr.responseText)));
+          }
+        };
+
+        xhr.onerror = function () { reject(new Error('network error')); };
+        xhr.send(file);
+      });
+    }
+
+    function uploadAll(files) {
+      var list = Array.prototype.slice.call(files);
+      var index = 0;
+
+      if (uploading || list.length === 0) { return; }
+
+      uploading = true;
+      showResult(true, '');
+
+      function next() {
+        if (index >= list.length) { return Promise.resolve(); }
+
+        var file = list[index];
+        var label = 'Uploading ' + (index + 1) + '/' + list.length + ' ' + file.name;
+
+        setBar(0, label);
+
+        return uploadOne(file, label).then(function () {
+          index++;
+          return next();
+        }).catch(function (e) {
+          throw new Error(file.name + ': ' + e.message);
+        });
+      }
+
+      next().then(function () {
+        showResult(true, 'Uploaded ' + list.length + ' file(s).');
+      }).catch(function (e) {
+        showResult(false, 'Upload failed: ' + e.message);
+      }).then(function () {
+        uploading = false;
+        hideBar();
+        refresh();
+      });
+    }
+
+    document.getElementById('crumbs').addEventListener('click', function (e) {
+      var path = e.target.getAttribute('data-path');
+      if (path) { goTo(path); }
+    });
+
+    document.getElementById('t_files').addEventListener('click', function (e) {
+      var t = e.target;
+
+      if (t.hasAttribute('data-up')) {
+        goTo(parentOf(cwd));
+      } else if (t.hasAttribute('data-open')) {
+        goTo(joinPath(cwd, entries[+t.getAttribute('data-open')].name));
+      } else if (t.hasAttribute('data-del')) {
+        remove(entries[+t.getAttribute('data-del')]);
+      }
+    });
+
+    var dz = document.getElementById('dropzone');
+    var fi = document.getElementById('file_input');
+
+    dz.addEventListener('click', function () { fi.click(); });
+
+    dz.addEventListener('dragover', function (e) {
+      e.preventDefault();
+      dz.classList.add('drag');
+    });
+
+    dz.addEventListener('dragleave', function () { dz.classList.remove('drag'); });
+
+    dz.addEventListener('drop', function (e) {
+      e.preventDefault();
+      dz.classList.remove('drag');
+      uploadAll(e.dataTransfer.files);
+    });
+
+    fi.addEventListener('change', function () {
+      uploadAll(fi.files);
+      fi.value = '';
+    });
+
+    refresh();
+  </script>
+</body>
+
+</html>

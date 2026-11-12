@@ -1,0 +1,115 @@
+{
+    "version": "2.0.0",
+    "inputs": [
+        {
+            "type": "pickString",
+            "options": [
+                "debug=y",
+                "debug=n"
+            ],
+            "id": "buildType",
+            "description": "Select build configuration: debug [y] or release [n]"
+        }
+    ],
+    "tasks": [
+        {
+            "type": "shell",
+            "label": "Compile",
+            "command": "make",
+            "args": [
+                "fast-build",
+                "${input:buildType}",
+                "verbose=n"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "problemMatcher": {
+                "base": "$gcc",
+                "fileLocation": [
+                    "relative",
+                    "${workspaceRoot}"
+                ]
+            }
+        },
+        {
+            "type": "shell",
+            "label": "Build & Install",
+            "command": "make",
+            "args": [
+                "build",
+                "${input:buildType}"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "problemMatcher": [],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            }
+        },
+        {
+            "type": "shell",
+            "label": "Style-Format",
+            "command": "make",
+            "args": [
+                "style-format"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "problemMatcher": []
+        },
+        {
+            "type": "shell",
+            "label": "Style-Check",
+            "command": "make",
+            "args": [
+                "style-check"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "problemMatcher": []
+        },
+        {
+            "type": "shell",
+            "label": "Clean",
+            "command": "make",
+            "args": [
+                "clean",
+                "${input:buildType}"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "problemMatcher": []
+        },
+        {
+            "type": "shell",
+            "label": "Clean All",
+            "command": "make",
+            "args": [
+                "clean-all"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "problemMatcher": []
+        },
+        {
+            "type": "shell",
+            "label": "Size Analysis",
+            "command": "make",
+            "args": [
+                "size-analysis",
+                "${input:buildType}"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "problemMatcher": []
+        }
+    ]
+}

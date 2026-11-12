@@ -1,0 +1,20 @@
+idf_component_register(
+    SRCS
+        "snapshot_upload.c"
+        "snapshot_upload_settings.c"
+        "snapshot_upload_shell.c"
+    INCLUDE_DIRS
+        "."
+    PRIV_REQUIRES
+        common
+        camera
+        data
+        network
+        esp_http_client
+        mbedtls
+        esp_timer
+        heap
+        freertos
+        log
+        shell
+)

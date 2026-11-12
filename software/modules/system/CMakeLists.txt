@@ -1,0 +1,15 @@
+idf_component_register(
+    SRCS
+        "system.c"
+        "system_shell.c"
+    INCLUDE_DIRS
+        "."
+    PRIV_REQUIRES
+        common
+        esp_system
+        esp_timer
+        freertos
+        log
+        nvs_flash
+        shell
+)

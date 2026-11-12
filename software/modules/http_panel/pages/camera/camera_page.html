@@ -1,0 +1,391 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ESP32S3 — Camera</title>
+  <link rel="stylesheet" href="/panel.css">
+  <style>
+    .view {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      min-height: 200px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+    }
+
+    .view img {
+      display: block;
+      max-width: 100%;
+      height: auto;
+    }
+
+    .view .placeholder {
+      color: var(--text-faint);
+      font-size: .9em;
+      padding: 40px;
+      text-align: center;
+    }
+
+    .view + .actions { margin-top: 14px; }
+
+    #info {
+      margin-left: auto;
+      font-size: .85em;
+    }
+
+    .savebar { margin-bottom: 0; }
+
+    #save_state {
+      flex: 1;
+      font-size: .9em;
+      color: var(--text-dim);
+    }
+
+    #save_state.dirty { color: var(--warn); }
+
+    .row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 7px 0;
+      border-bottom: 1px solid var(--border);
+      font-size: .9em;
+    }
+
+    .row:last-child { border-bottom: none; }
+    .row.off { opacity: .35; }
+
+    /* Flex min-width:auto would let a range input's ~130px intrinsic width
+     * push the value label out of the card. */
+    .row > * { min-width: 0; }
+
+    .row label {
+      flex: 0 1 45%;
+      color: var(--text-dim);
+    }
+
+    .row input[type=range] { flex: 1 1 0; }
+
+    .row select {
+      width: auto;
+      flex: 1 1 0;
+      padding: 5px 8px;
+    }
+
+    .row .val {
+      flex: 0 0 auto;
+      min-width: 3.2em;   /* fits "-2", "320", "1536" without reflowing */
+      text-align: right;
+      font-weight: 600;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .row input[type=checkbox] { margin-left: auto; }
+  </style>
+</head>
+
+<body>
+  <header id="panel-header"></header>
+  <script src="/panel.js"></script>
+
+  <main class="panel-main">
+    <div class="card">
+      <div class="view" id="view">
+        <div class="placeholder" id="placeholder">Stream stopped</div>
+        <img id="stream" alt="" style="display:none">
+      </div>
+      <div class="actions">
+        <button class="btn" id="b_stream" onclick="toggleStream()">Start stream</button>
+        <button class="btn btn-secondary" id="b_still" onclick="snapshot()">Snapshot</button>
+        <a class="btn btn-secondary" id="b_save" style="display:none" download>Save snapshot</a>
+        <span class="muted" id="info"></span>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head savebar">
+        <span id="save_state">Settings</span>
+        <button class="btn" id="b_save_cfg" onclick="settingsAction('save')">Save settings</button>
+        <button class="btn btn-secondary" id="b_defaults"
+          onclick="if (confirm('Restore default camera settings and erase the saved ones?')) settingsAction('defaults')">
+          Restore defaults
+        </button>
+      </div>
+    </div>
+
+    <div class="grid-2" id="controls"></div>
+  </main>
+
+  <script>
+    /* Layout only — ranges and values come from /camera/status.
+     * [name, label, kind, options, dependsOn, dependsValue]: greyed out
+     * unless setting dependsOn equals dependsValue. */
+    var LAYOUT = [
+      { title: 'Image', items: [
+        ['framesize', 'Resolution', 'framesize'],
+        ['quality', 'JPEG quality (lower = better)', 'range'],
+        ['brightness', 'Brightness', 'range'],
+        ['contrast', 'Contrast', 'range'],
+        ['saturation', 'Saturation', 'range'],
+        ['sharpness', 'Sharpness', 'range'],
+        ['denoise', 'De-noise', 'range'],
+        ['special_effect', 'Effect', 'select',
+          ['None', 'Negative', 'Grayscale', 'Red tint', 'Green tint', 'Blue tint', 'Sepia']],
+        ['hmirror', 'Mirror', 'toggle'],
+        ['vflip', 'Flip', 'toggle']
+      ]},
+      { title: 'Exposure & gain', items: [
+        ['aec', 'Auto exposure', 'toggle'],
+        ['aec2', 'Night mode', 'toggle'],
+        ['ae_level', 'Exposure level', 'range', null, 'aec', 1],
+        ['aec_value', 'Manual exposure', 'range', null, 'aec', 0],
+        ['agc', 'Auto gain', 'toggle'],
+        ['agc_gain', 'Manual gain', 'range', null, 'agc', 0],
+        ['gainceiling', 'Gain ceiling', 'range', null, 'agc', 1]
+      ]},
+      { title: 'White balance', items: [
+        ['awb', 'Auto white balance', 'toggle'],
+        ['awb_gain', 'AWB gain', 'toggle'],
+        ['wb_mode', 'Mode', 'select', ['Auto', 'Sunny', 'Cloudy', 'Office', 'Home'], 'awb_gain', 1]
+      ]},
+      { title: 'LED', items: [
+        ['led_intensity', 'Intensity (lit while streaming)', 'range']
+      ]},
+      { title: 'Corrections', collapsed: true, items: [
+        ['bpc', 'Black pixel correction', 'toggle'],
+        ['wpc', 'White pixel correction', 'toggle'],
+        ['raw_gma', 'Gamma', 'toggle'],
+        ['lenc', 'Lens correction', 'toggle'],
+        ['dcw', 'Downsize (DCW)', 'toggle'],
+        ['colorbar', 'Test pattern', 'toggle']
+      ]}
+    ];
+
+    var SIZE_NAMES = {
+      '2048x1536': 'QXGA', '1920x1080': 'Full HD', '1600x1200': 'UXGA',
+      '1280x1024': 'SXGA', '1280x720': 'HD', '1024x768': 'XGA',
+      '800x600': 'SVGA', '640x480': 'VGA', '320x240': 'QVGA'
+    };
+
+    var built = false, state = null, streaming = false, stillUrl = null;
+    var sensorText = 'Connecting...', sensorState = 'busy', errorText = '';
+
+    function $(id) { return document.getElementById(id); }
+
+    /* Sensor name and last error share the header chip; the error is kept
+     * separately so the 2 s status poll does not wipe it. */
+    function updateStatus() {
+      if (errorText) {
+        panelStatus(sensorText + ' — ' + errorText, 'error');
+      } else {
+        panelStatus(sensorText, sensorState);
+      }
+    }
+
+    function setSensor(text, chipState) {
+      sensorText = text;
+      sensorState = chipState;
+      updateStatus();
+    }
+
+    function showError(msg) {
+      errorText = msg || '';
+      updateStatus();
+    }
+
+    function buildControls(st) {
+      var html = '';
+      LAYOUT.forEach(function (group) {
+        var rows = '';
+        group.items.forEach(function (it) {
+          var name = it[0], s = st.settings[name];
+          if (!s) { return; }
+          rows += '<div class="row" id="row_' + name + '"><label for="c_' + name + '">' +
+            esc(it[1]) + '</label>' + controlHtml(name, it, s, st) + '</div>';
+        });
+        if (!rows) { return; }
+        html += group.collapsed
+          ? '<div class="card"><details><summary>' + esc(group.title) + '</summary>' + rows + '</details></div>'
+          : '<div class="card"><div class="card-head"><h2>' + esc(group.title) + '</h2></div>' + rows + '</div>';
+      });
+      $('controls').innerHTML = html;
+      built = true;
+    }
+
+    function controlHtml(name, it, s, st) {
+      var kind = it[2];
+      if (kind === 'toggle') {
+        return '<input type="checkbox" id="c_' + name + '" onchange="send(\'' + name + '\', this.checked ? 1 : 0)">';
+      }
+      if (kind === 'select' || kind === 'framesize') {
+        var vals = [], opts = '';
+        for (var v = s.min; v <= s.max; v++) { vals.push(v); }
+        if (kind === 'framesize') { vals.reverse(); }   /* largest resolution first */
+        vals.forEach(function (v) {
+          var label;
+          if (kind === 'framesize') {
+            var wh = st.framesizes[v];
+            if (!wh) { return; }
+            var key = wh[0] + 'x' + wh[1];
+            label = key + (SIZE_NAMES[key] ? ' (' + SIZE_NAMES[key] + ')' : '');
+          } else {
+            label = it[3][v] || v;
+          }
+          opts += '<option value="' + v + '">' + esc(label) + '</option>';
+        });
+        return '<select id="c_' + name + '" onchange="send(\'' + name + '\', this.value)">' + opts + '</select>';
+      }
+      return '<input type="range" id="c_' + name + '" min="' + s.min + '" max="' + s.max + '"' +
+        ' oninput="$(\'v_' + name + '\').textContent = this.value"' +
+        ' onchange="send(\'' + name + '\', this.value)">' +
+        '<span class="val" id="v_' + name + '"></span>';
+    }
+
+    function applyValues(st) {
+      LAYOUT.forEach(function (group) {
+        group.items.forEach(function (it) {
+          var name = it[0], s = st.settings[name], el = $('c_' + name);
+          if (!s || !el) { return; }
+          if (el.type === 'checkbox') { el.checked = !!s.value; }
+          else { el.value = s.value; }
+          var v = $('v_' + name);
+          if (v) { v.textContent = s.value; }
+          if (it[4]) {
+            var dep = st.settings[it[4]];
+            var on = !dep || dep.value === it[5];
+            el.disabled = !on;
+            $('row_' + name).className = on ? 'row' : 'row off';
+          }
+        });
+      });
+    }
+
+    function applyInfo(st) {
+      if (st.ready) {
+        setSensor(st.sensor, 'ok');
+      } else {
+        setSensor('Camera not detected', 'error');
+      }
+      var fs = st.settings.framesize, wh = fs && st.framesizes[fs.value];
+      var txt = wh ? wh[0] + '×' + wh[1] : '';
+      if (streaming || st.viewers > 0) {
+        txt += ' · ' + st.fps.toFixed(1) + ' fps · ' +
+          st.viewers + '/' + st.max_viewers + ' viewer' + (st.max_viewers > 1 ? 's' : '');
+      }
+      var cpu = (st.cpu || []).filter(function (p) { return p >= 0; });
+      if (cpu.length) {
+        txt += ' · CPU ' + cpu.map(function (p) { return p + '%'; }).join(' / ');
+      }
+      $('info').textContent = txt;
+      var ss = $('save_state');
+      ss.textContent = !st.ready ? 'Settings unavailable'
+        : st.unsaved ? 'Unsaved changes — lost on reboot unless saved'
+        : 'Settings saved — applied at every boot';
+      ss.className = st.unsaved ? 'dirty' : '';
+      $('b_save_cfg').disabled = !st.ready || !st.unsaved;
+      $('b_defaults').disabled = !st.ready;
+      $('b_stream').disabled = !st.ready;
+      $('b_still').disabled = !st.ready;
+    }
+
+    function refresh(full) {
+      return fetch('/camera/status', { cache: 'no-store' })
+        .then(function (r) { return r.json(); })
+        .then(function (st) {
+          state = st;
+          if (!built) { buildControls(st); full = true; }
+          if (full) { applyValues(st); }
+          applyInfo(st);
+        })
+        .catch(function () { setSensor('Device unreachable', 'error'); });
+    }
+
+    /* Re-sync every control afterwards: settings can affect each other. */
+    function request(url, label, opts) {
+      showError('');
+      fetch(url, opts)
+        .then(function (r) {
+          if (!r.ok) {
+            return r.text().then(function (t) { showError(label + ': ' + (t || r.status)); });
+          }
+        })
+        .catch(function () { showError('request failed'); })
+        .then(function () { refresh(true); });
+    }
+
+    function send(name, value) {
+      request('/camera/control?var=' + encodeURIComponent(name) + '&val=' + parseInt(value, 10), name);
+    }
+
+    function settingsAction(action) {
+      request('/camera/settings?action=' + action, action, { method: 'POST' });
+    }
+
+    function showImage(src) {
+      var img = $('stream');
+      if (src) {
+        img.src = src;
+      } else {
+        img.removeAttribute('src');   /* also aborts an MJPEG connection */
+      }
+      img.style.display = src ? '' : 'none';
+      $('placeholder').style.display = src ? 'none' : '';
+    }
+
+    function setStreaming(on) {
+      streaming = on;
+      var img = $('stream');
+      if (on) {
+        img.onerror = function () {
+          if (streaming) {
+            setStreaming(false);
+            showError('stream unavailable (viewer limit reached or camera error)');
+          }
+        };
+        showImage('/camera/stream?_=' + Date.now());
+      } else {
+        img.onerror = null;
+        showImage(null);
+      }
+      $('b_stream').textContent = on ? 'Stop stream' : 'Start stream';
+      $('b_stream').className = on ? 'btn btn-danger' : 'btn';
+    }
+
+    function toggleStream() {
+      showError('');
+      setStreaming(!streaming);
+    }
+
+    function snapshot() {
+      showError('');
+      $('b_still').disabled = true;
+      fetch('/camera/capture?_=' + Date.now(), { cache: 'no-store' })
+        .then(function (r) {
+          if (!r.ok) { throw new Error('HTTP ' + r.status); }
+          return r.blob();
+        })
+        .then(function (blob) {
+          if (stillUrl) { URL.revokeObjectURL(stillUrl); }
+          stillUrl = URL.createObjectURL(blob);
+          if (streaming) { setStreaming(false); }
+          showImage(stillUrl);
+          var save = $('b_save');
+          save.href = stillUrl;
+          save.download = 'capture-' + new Date().toISOString().replace(/[:.]/g, '-') + '.jpg';
+          save.style.display = '';
+        })
+        .catch(function (e) { showError('snapshot failed (' + e.message + ')'); })
+        .then(function () { $('b_still').disabled = !(state && state.ready); });
+    }
+
+    refresh(true);
+    setInterval(function () { refresh(false); }, 2000);
+  </script>
+</body>
+
+</html>

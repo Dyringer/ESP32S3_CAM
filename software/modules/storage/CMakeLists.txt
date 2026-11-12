@@ -1,0 +1,13 @@
+idf_component_register(
+    SRCS
+        "storage.c"
+        "storage_shell.c"
+    INCLUDE_DIRS
+        "."
+    PRIV_REQUIRES
+        joltwallet__littlefs
+        common
+        shell
+        log
+        freertos
+)

@@ -1,0 +1,17 @@
+# Shared ESP-IDF image: ESP32S3_CAM, ESP32S3_BASE and ESP32S3_LCD use the same
+# Dockerfile and tag, so the image is built once. Change the Dockerfile in all three.
+# The container is named after the project folder (e.g. esp32s3_base-idf-1).
+services:
+    idf:
+        image: esp32s3-idf:6.1
+        build: .
+        environment:
+            - LOCAL_USER_ID=${LOCAL_USER_ID:-1000}
+        volumes:
+            - .:/workspace
+        command: bash -c "while true; do sleep 10; done"
+        tty: true
+networks:
+    default:
+        name: docker-shared
+        external: true

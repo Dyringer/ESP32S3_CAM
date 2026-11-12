@@ -1,0 +1,19 @@
+idf_component_register(
+    SRCS
+        "sensor_core.c"
+        "sensor_registry.c"
+        "sensor_shell.c"
+        "sensor_store.c"
+        "drivers/ltr308_driver.c"
+    INCLUDE_DIRS
+        "."
+    REQUIRES
+        esp_driver_i2c
+        esp_event
+    PRIV_REQUIRES
+        board
+        common
+        freertos
+        log
+        shell
+)
